@@ -11,6 +11,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-implode-limit.php:/var/www/html/normal-implode-limit.php:ro" \
     -v "$script_dir/normal-chunk-limit.php:/var/www/html/normal-chunk-limit.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
+    -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -53,6 +54,9 @@ normal_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-wordwrap-limit.php)
 [[ $normal_wordwrap == WORDWRAP_OK ]] || { printf 'normal wordwrap failed: %s\n' "$normal_wordwrap" >&2; exit 1; }
+normal_explode=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-explode-limit.php)
+[[ $normal_explode == EXPLODE_OK ]] || { printf 'normal explode failed: %s\n' "$normal_explode" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -133,4 +137,23 @@ after_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
 [[ ${pre%%$'\n'*} == ${after_wordwrap%%$'\n'*} ]] || {
     printf 'Apache worker changed after wordwrap soft OOM\n' >&2; exit 1;
 }
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED WORKER_REUSED
+for explode_case in positive negative terminal; do
+    explode_url='http://127.0.0.1/normal-explode-limit.php?limit=1'
+    if [[ $explode_case == negative ]]; then
+        explode_url+='&negative=1'
+    elif [[ $explode_case == terminal ]]; then
+        explode_url+='&terminal=1'
+    fi
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/explode-limit.out "$explode_url" >/dev/null
+    exploded=$(podman exec "$container_id" tail -c 500 /tmp/explode-limit.out)
+    after_explode=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $exploded == *READY* && $exploded == *'Allowed memory size of 8388608 bytes exhausted'* && $exploded != *RETURNED* ]] || {
+        printf 'expected %s explode soft OOM and request abort missing: %s\n' "$explode_case" "$exploded" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_explode%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s explode soft OOM\n' "$explode_case" >&2; exit 1;
+    }
+done
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED WORKER_REUSED

@@ -3355,7 +3355,47 @@
  
  		RETURN_NEW_STR(newtext);
  	}
-@@ -1251,7 +1286,17 @@
+@@ -1087,6 +1122,9 @@
+ 	} else {
+ 		do {
+ 			size_t l = p2 - p1;
++			if (ZEND_HAS_OOM()) {
++				return;
++			}
+ 
+ 			if (l == 0) {
+ 				ZVAL_EMPTY_STRING(&tmp);
+@@ -1100,7 +1138,7 @@
+ 			p2 = php_memnstr(p1, ZSTR_VAL(delim), ZSTR_LEN(delim), endp);
+ 		} while (p2 != NULL && --limit > 1);
+ 
+-		if (p1 <= endp) {
++		if (!ZEND_HAS_OOM() && p1 <= endp) {
+ 			ZVAL_STRINGL(&tmp, p1, endp - p1);
+ 			zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &tmp);
+ 		}
+@@ -1130,6 +1168,10 @@
+ 
+ 		positions[found++] = p1;
+ 		do {
++			if (ZEND_HAS_OOM()) {
++				efree((void *)positions);
++				return;
++			}
+ 			if (found >= allocated) {
+ 				allocated = found + EXPLODE_ALLOC_STEP;/* make sure we have enough memory */
+ 				positions = erealloc(positions, allocated*sizeof(char *));
+@@ -1141,6 +1183,9 @@
+ 		to_return = limit + found;
+ 		/* limit is at least -1 therefore no need of bounds checking : i will be always less than found */
+ 		for (i = 0; i < to_return; i++) { /* this checks also for to_return > 0 */
++			if (ZEND_HAS_OOM()) {
++				break;
++			}
+ 			ZVAL_STRINGL(&tmp, positions[i], (positions[i+1] - ZSTR_LEN(delim)) - positions[i]);
+ 			zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &tmp);
+ 		}
+@@ -1251,7 +1296,17 @@
  	} ZEND_HASH_FOREACH_END();
  
  	/* numelems can not be 0, we checked above */
@@ -3374,7 +3414,7 @@
  	cptr = ZSTR_VAL(str) + ZSTR_LEN(str);
  	*cptr = 0;
  
-@@ -2331,7 +2376,10 @@
+@@ -2331,7 +2386,10 @@
  	}
  	out_len += srclen + 1;
  
@@ -3386,7 +3426,7 @@
  
  	for (p = src, q = ZSTR_VAL(dest); p < (src + srclen - chunklen + 1); ) {
  		memcpy(q, p, chunklen);
-@@ -2379,7 +2427,10 @@
+@@ -2379,7 +2437,10 @@
  
  	if ((size_t)chunklen > ZSTR_LEN(str)) {
  		/* to maintain BC, we must return original string + ending */
@@ -3398,7 +3438,7 @@
  		memcpy(ZSTR_VAL(result), ZSTR_VAL(str), ZSTR_LEN(str));
  		memcpy(ZSTR_VAL(result) + ZSTR_LEN(str), end, endlen);
  		ZSTR_VAL(result)[ZSTR_LEN(result)] = '\0';
-@@ -2394,6 +2445,8 @@
+@@ -2394,6 +2455,8 @@
  
  	if (result) {
  		RETURN_STR(result);
@@ -3407,7 +3447,7 @@
  	} else {
  		RETURN_FALSE;
  	}
-@@ -5437,7 +5490,10 @@
+@@ -5437,7 +5500,10 @@
  		RETURN_EMPTY_STRING();
  
  	/* Initialize the result string */
@@ -3419,7 +3459,7 @@
  	result_len = ZSTR_LEN(input_str) * mult;
  
  	/* Heavy optimization for situations where input string is 1 byte long */
-@@ -5791,7 +5847,10 @@
+@@ -5791,7 +5857,10 @@
  		return;
  	}
  
