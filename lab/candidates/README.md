@@ -2,7 +2,7 @@
 
 `php-5.6.40-late-error.patch` は、既存の緊急差分に、post-RSHUTDOWN 後の `last_error_message`・`last_error_file` 消去を加えた合成差分です。PHP 5.6.40 の元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルド、通常セッション・multipart、進捗停止を確認しました。後処理診断による残存状態と両 CVE の全経路は未検証です。配布用 `patches/` には移していません。
 
-`php-5.6.40-session-preserving.patch` は、上記の緊急差分を土台に、早期の upload progress 更新中だけ保存済みオブジェクトを不完全クラスとして復号し、`Serializable` の元ペイロードを再保存する**開発途中の差分**です。通常の `serialize()` はこの専用モードを使いません。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド、通常の multipart・upload progress、無害な `Serializable` 値の更新後の維持を確認しました。ビルド時に生成された復号器を候補内の生成済み C へ戻して再コンパイルし、同じ良性検査を再実行しました。両 CVE の遮断、OOM 後のワーカー回復、保存形式全般の互換性は未検証です。配布用 `patches/` には移していません。
+`php-5.6.40-session-preserving.patch` は、上記の緊急差分を土台に、早期の upload progress 更新中だけ保存済みオブジェクトを不完全クラスとして復号し、`Serializable` の元ペイロードを再保存する**開発途中の差分**です。multipart 開始時にもセッション状態を初期化します。通常の `serialize()` はこの専用モードを使いません。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド、通常の multipart・upload progress、無害な `Serializable` 値の更新後の維持を確認しました。ビルド時に生成された復号器を候補内の生成済み C へ戻して再コンパイルし、同じ良性検査を再実行しました。開始時初期化の追加後は `ext/session/session.c` を増分コンパイルして正常系を再実行しました。両 CVE の遮断、OOM 後のワーカー回復、保存形式全般の互換性は未検証です。配布用 `patches/` には移していません。
 
 `php-7.3.33-session-preserving.patch` は、PHP 7.3.33 の元アーカイブに対し既存の緊急変更と upload progress の機能維持案を合わせた**開発途中の差分**です。fuzz なしの適用、Linux/amd64・Apache/mod_php のビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値のセッション維持を確認しました。確認したのはこの正常系のみです。保存済みセッション形式全般の互換性、OOM 後の挙動、2 件の CVE の遮断は未検証です。導入用には `patches/` の版別パッチを使い、この候補を配布済みの修正として扱わないでください。
 

@@ -30,7 +30,7 @@ PHP 7.4.33、8.0.30、8.1.34 の公式最小バックポートと、その版専
 | `zend_alloc.[ch]`: soft limit の保留、hard limit、割当失敗の扱い | `zend_mm_safe_error()` と `zend_set_memory_limit()`。現行候補は両種の OOM を `_exit(1)` に送る | 同名の関数はあるが、古いアロケータと TSRMLS に合わせて別実装が必要 |
 | `zend_globals.h`、`zend_vm_def.h` と生成済み VM: 保留状態と安全地点への配送 | 既存の `EG(vm_interrupt)` を使う余地がある。アロケータ単独では完結しない | 7.3 と同じ VM 割り込み経路はない。安全地点と配送方法を先に定義する必要がある |
 | `zend_execute_API.c`、`Zend/zend.c`、`main/SAPI.c`: 関数呼び出し、主スクリプト、POST の終了境界 | `zend_call_function()`、主スクリプト実行、POST 呼び出し元を版別に追う | zval、例外、関数呼び出しの規約が異なるため直接移植しない |
-| `ext/session/session.c` と `ext/standard/var_unserializer.re`: 進捗更新中だけ不完全クラスで復号し、RINIT 前の状態を初期化・破棄 | 現行候補は callback を停止している。復号・再符号化、更新開始・終了、`_SESSION` の寿命を一体で戻す | `zval *` と古い unserializer API を使用する。進捗停止を解除する前に専用の安全な復号モードが必要 |
+| `ext/session/session.c` と `ext/standard/var_unserializer.re`: 進捗更新中だけ不完全クラスで復号し、RINIT 前の状態を初期化・破棄 | 配布用候補は callback を停止。機能維持候補では復号・再符号化、更新開始・終了、`_SESSION` の寿命を一体で扱う | `zval *` と古い unserializer API を使用。機能維持候補では専用復号と multipart 開始時の状態初期化を移植したが、残る状態経路は未判定 |
 | `zend_execute_API.c`、`main/main.c`: 初期化前の診断が触れる状態の最終リセット | 現行候補は一部の executor と HTTP globals を消すが、拡張の後処理による再設定も含めて確認が必要 | 同様に一部のみ。終了処理後半の診断と次リクエスト開始前の参照を版別に追う |
 
 当面の版別チェックは、ソース上の限定条件が通っても両 CVE の完了とは判定しない。5.6.40 と 7.3.33 は未完成を終了コード 3 で返す。

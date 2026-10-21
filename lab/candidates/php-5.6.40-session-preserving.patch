@@ -336,7 +336,15 @@
  		return retval;
  	}
  
-@@ -2824,6 +2839,7 @@
+@@ -2678,6 +2693,7 @@
+ 	switch(event) {
+ 		case MULTIPART_EVENT_START: {
+ 			multipart_event_start *data = (multipart_event_start *) event_data;
++			php_rinit_session_globals(TSRMLS_C);
+ 			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
+ 			progress->content_length = data->content_length;
+ 			progress->sname_len  = strlen(PS(session_name));
+@@ -2824,6 +2840,7 @@
  					Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
  					php_session_rfc1867_update(progress, 1 TSRMLS_CC);
  				}
