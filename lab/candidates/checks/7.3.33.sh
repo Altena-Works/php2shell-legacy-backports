@@ -56,3 +56,4 @@ printf '%s\n' "$result"
 [[ $result == $'SEEDED\nMULTIPART_OK\nPRESERVED' ]]
 
 "$script_dir/candidates/check-json-oom.sh" "$source_tree"
+"$script_dir/candidates/check-repeat-oom.sh" "$source_tree"

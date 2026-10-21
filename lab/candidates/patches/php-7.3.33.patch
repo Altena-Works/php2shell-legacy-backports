@@ -77,14 +77,14 @@
  	int                overflow;                /* memory overflow flag */
  #endif
  
-@@ -358,9 +361,44 @@
+@@ -358,7 +361,42 @@
  #if ZEND_DEBUG && defined(HAVE_KILL) && defined(HAVE_GETPID)
  	kill(getpid(), SIGSEGV);
  #endif
 -	exit(1);
 +	_exit(1);
- }
- 
++}
++
 +ZEND_API ZEND_COLD ZEND_NORETURN void zend_mm_safe_error_ex(const char *format, ...)
 +{
 +	zend_string *script_filename = NULL;
@@ -118,38 +118,40 @@
 +# endif
 +
 +	_exit(1);
-+}
-+
+ }
+ 
  static ZEND_COLD ZEND_NORETURN void zend_mm_safe_error(zend_mm_heap *heap,
- 	const char *format,
- 	size_t limit,
-@@ -370,24 +408,78 @@
+@@ -370,23 +408,77 @@
  #endif
  	size_t size)
  {
-+	(void) heap;
- 
+-
 -	heap->overflow = 1;
 -	zend_try {
 -		zend_error_noreturn(E_ERROR,
 -			format,
 -			limit,
-+	zend_mm_safe_error_ex(format, limit,
- #if ZEND_DEBUG
+-#if ZEND_DEBUG
 -			filename,
 -			lineno,
-+		filename,
-+		lineno,
- #endif
+-#endif
 -			size);
 -	} zend_catch {
 -	}  zend_end_try();
 -	heap->overflow = 0;
 -	zend_bailout();
 -	exit(1);
+-}
++	(void) heap;
++
++	zend_mm_safe_error_ex(format, limit,
++#if ZEND_DEBUG
++		filename,
++		lineno,
++#endif
 +		size);
- }
- 
++}
++
 +ZEND_API void zend_mm_oom_info_dtor(zend_oom_info *info)
 +{
 +	if (info->message) {
@@ -211,10 +213,9 @@
 +	}
 +}
 +#endif
-+
+ 
  #ifdef _WIN32
  void
- stderr_last_error(char *msg)
 @@ -982,18 +1074,12 @@
  				heap->cached_chunks = chunk->next;
  			} else {
@@ -287,9 +288,10 @@
 -#endif
 -			return NULL;
 -		}
+-	}
 +	if (UNEXPECTED(heap->limit < heap->real_size || new_size > heap->limit - heap->real_size)) {
 +		zend_mm_gc(heap);
- 	}
++	}
 +	zend_mm_check_soft_hard_limit(heap, new_size, size ZEND_FILE_LINE_RELAY_CC);
  #endif
  	ptr = zend_mm_chunk_alloc(heap, new_size, ZEND_MM_CHUNK_SIZE);
@@ -302,7 +304,46 @@
  	heap->overflow = 0;
  #endif
  #if ZEND_MM_CUSTOM
-@@ -2596,7 +2667,7 @@
+@@ -2383,6 +2454,38 @@
+ static zend_alloc_globals alloc_globals;
+ #endif
+ 
++ZEND_API zend_bool zend_mm_fallible_failed(void)
++{
++	return ZEND_HAS_OOM();
++}
++
++ZEND_API zend_bool zend_mm_fallible_check(size_t nmemb, size_t size, size_t offset)
++{
++	size_t requested;
++	if (zend_mm_fallible_failed()) {
++		return 0;
++	}
++	if (nmemb != 0 && size > (SIZE_MAX - offset) / nmemb) {
++		zend_mm_delayed_error("Possible integer overflow in memory allocation (%zu * %zu + %zu)",
++			nmemb, size, offset);
++		return 0;
++	}
++	requested = nmemb * size + offset;
++
++#if ZEND_MM_LIMIT
++#if ZEND_MM_CUSTOM
++	if (!AG(mm_heap)->use_custom_heap && requested > AG(mm_heap)->limit) {
++#else
++	if (requested > AG(mm_heap)->limit) {
++#endif
++		zend_mm_delayed_error("Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)",
++			AG(mm_heap)->limit, requested);
++		return 0;
++	}
++#endif
++	return 1;
++}
++
+ ZEND_API int is_zend_mm(void)
+ {
+ #if ZEND_MM_CUSTOM
+@@ -2596,7 +2699,7 @@
  
  	length = strlen(s);
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -311,7 +352,7 @@
  	}
  	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
  	memcpy(p, s, length+1);
-@@ -2608,7 +2679,7 @@
+@@ -2608,7 +2711,7 @@
  	char *p;
  
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -320,7 +361,7 @@
  	}
  	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
  	memcpy(p, s, length);
-@@ -2622,7 +2693,7 @@
+@@ -2622,7 +2725,7 @@
  	char *p;
  
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -329,7 +370,7 @@
  	}
  	p = (char *) malloc(length + 1);
  	if (UNEXPECTED(p == NULL)) {
-@@ -2639,7 +2710,14 @@
+@@ -2639,7 +2742,14 @@
  ZEND_API int zend_set_memory_limit(size_t memory_limit)
  {
  #if ZEND_MM_LIMIT
@@ -345,7 +386,7 @@
  #endif
  	return SUCCESS;
  }
-@@ -2866,6 +2944,7 @@
+@@ -2866,6 +2976,7 @@
  #endif
  #if ZEND_MM_LIMIT
  	heap->limit = (Z_L(-1) >> Z_L(1));
@@ -353,7 +394,7 @@
  	heap->overflow = 0;
  #endif
  #if ZEND_MM_CUSTOM
-@@ -2901,7 +2980,7 @@
+@@ -2901,7 +3012,7 @@
  static ZEND_COLD ZEND_NORETURN void zend_out_of_memory(void)
  {
  	fprintf(stderr, "Out of memory\n");
@@ -362,10 +403,12 @@
  }
  
  ZEND_API void * __zend_malloc(size_t len)
-@@ -2932,6 +3011,34 @@
+@@ -2930,6 +3041,34 @@
+ 		return p;
+ 	}
  	zend_out_of_memory();
- }
- 
++}
++
 +ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void)
 +{
 +	zend_oom_info *info = &EG(delayed_oom);
@@ -392,18 +435,15 @@
 +	if (!execute_data) {
 +		zend_bailout();
 +	}
-+}
-+
+ }
+ 
  /*
-  * Local variables:
-  * tab-width: 4
 --- a/Zend/zend_alloc.h
 +++ b/Zend/zend_alloc.h
-@@ -42,7 +42,23 @@
- 
+@@ -43,6 +43,22 @@
  #define ZEND_MM_ALIGNED_SIZE_EX(size, alignment) \
  	(((size) + ((alignment) - Z_L(1))) & ~((alignment) - Z_L(1)))
-+
+ 
 +typedef enum _zend_oom_state {
 +	ZEND_OOM_STATE_NONE = 0,
 +	ZEND_OOM_STATE_PENDING,
@@ -417,19 +457,21 @@
 +	zend_string *message;
 +	zend_string *filename;
 +} zend_oom_info;
- 
++
 +#define ZEND_HAS_OOM() (UNEXPECTED(EG(delayed_oom).state != ZEND_OOM_STATE_NONE))
 +
  typedef struct _zend_leak_info {
  	void *addr;
  	size_t size;
-@@ -397,6 +413,10 @@
+@@ -397,6 +413,12 @@
  
  */
  
 +ZEND_API ZEND_COLD ZEND_NORETURN void zend_mm_safe_error_ex(const char *format, ...);
 +ZEND_API void zend_mm_oom_info_dtor(zend_oom_info *info);
 +ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void);
++ZEND_API zend_bool zend_mm_fallible_check(size_t nmemb, size_t size, size_t offset);
++ZEND_API zend_bool zend_mm_fallible_failed(void);
 +
  END_EXTERN_C()
  
@@ -818,6 +860,27 @@
  #define ZSTR_ALLOCA_ALLOC(str, _len, use_heap) do { \
  	(str) = (zend_string *)do_alloca(ZEND_MM_ALIGNED_SIZE_EX(_ZSTR_STRUCT_SIZE(_len), 8), (use_heap)); \
  	GC_SET_REFCOUNT(str, 1); \
+@@ -147,6 +150,20 @@
+ 	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
+ 	zend_string_forget_hash_val(ret);
+ 	ZSTR_LEN(ret) = (n * m) + l;
++	return ret;
++}
++
++static zend_always_inline zend_string *zend_string_safe_falloc(size_t n, size_t m, size_t l, int persistent)
++{
++	zend_string *ret;
++	if (!persistent && !zend_mm_fallible_check(n, m, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)))) {
++		return NULL;
++	}
++	ret = zend_string_safe_alloc(n, m, l, persistent);
++	if (!persistent && zend_mm_fallible_failed()) {
++		efree(ret);
++		return NULL;
++	}
+ 	return ret;
+ }
+ 
 --- a/Zend/zend_strtod.c
 +++ b/Zend/zend_strtod.c
 @@ -600,7 +600,7 @@
@@ -3071,3 +3134,17 @@
  again:
  	switch (Z_TYPE_P(val))
  	{
+--- a/ext/standard/string.c
++++ b/ext/standard/string.c
+@@ -5437,7 +5437,10 @@
+ 		RETURN_EMPTY_STRING();
+ 
+ 	/* Initialize the result string */
+-	result = zend_string_safe_alloc(ZSTR_LEN(input_str), mult, 0, 0);
++	result = zend_string_safe_falloc(ZSTR_LEN(input_str), mult, 0, 0);
++	if (UNEXPECTED(result == NULL)) {
++		return;
++	}
+ 	result_len = ZSTR_LEN(input_str) * mult;
+ 
+ 	/* Heavy optimization for situations where input string is 1 byte long */
