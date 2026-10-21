@@ -9,14 +9,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 統合候補に遅延 OOM、JSON 中断、主要文字列関数の失敗可能割当、`explode` の OOM 保留時のループ中断と upload progress の各イベント・更新時の OOM 保留確認を実装。Linux/amd64・Apache/mod_php で直前の差分全体をクリーンビルドし、最新差分を増分ビルドして通常のセッション・multipart・進捗・JSON・文字列関数と、代表的な良性 OOM 後の同一ワーカー再利用を確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点と復号失敗経路、両 CVE の全経路は未判定 |
+| 7.3.33 | 統合候補に遅延 OOM、JSON 中断、主要文字列関数の失敗可能割当、`explode` の OOM 保留時のループ中断と upload progress の各イベント・更新時の OOM 保留確認を実装。最新差分全体を Linux/amd64・Apache/mod_php でクリーンビルドし、通常のセッション・multipart・進捗・JSON・文字列関数と、代表的な良性 OOM 後の同一ワーカー再利用を確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点と復号失敗経路、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 統合候補の最新差分 SHA-256 は `b089ee1023b7eb0c4e8446ef6a2d1bd2e25bc9f3bcad37626632bfa1c5c4ca1b`。固定済み元アーカイブへの fuzz なし dry-run と実適用を通し、変更した `session.c`・`string.c` と増分ビルド済みソースの一致を確認した。直前差分のクリーンビルド結果は `/private/tmp/php-backport-73-upload-oom-matrix/patch/7.3.33/` の `status=pass` と `defense-check.log` にある。各イベントの割当後ガードを追加した最新差分は Linux/amd64・Apache/mod_php で増分ビルドし、同じ版別検査を再実行して通過した。最新 `libphp7.so` の SHA-256 は `d9f63cb24ad52f94d42bfc5f730ee262badcef24d3ec91a899bbe422515a84ca`。**最新差分全体のクリーンビルドは未実施。**
+7.3.33 統合候補の最新差分 SHA-256 は `b089ee1023b7eb0c4e8446ef6a2d1bd2e25bc9f3bcad37626632bfa1c5c4ca1b`。固定済み元アーカイブへ fuzz なしで適用し、`/private/tmp/php-backport-73-latest-clean/patch/7.3.33/` で最新差分全体のクリーンビルド、Apache/mod_php の通常セッション・multipart・進捗、JSON・文字列処理と代表的な良性 OOM 後のワーカー再利用を確認した。`status=pass`、`runtime.txt`、`defense-check.log` が結果である。生成した `libphp7.so` の SHA-256 は `e14e68478ef54c25051816cdf935cc0d89e34d7030b8aa750070042136d7e394`。版別チェックは全入口・全拡張の遮断を証明しない。
 
 `str_repeat`・`str_pad`・`implode`・`chunk_split`・`wordwrap` の失敗可能割当は、`heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。`wordwrap` の途中の拡張・縮小も失敗可能な再割当へ変更し、失敗時に元の文字列を解放する。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理と `wordwrap` の旧版の引数エラー、結果拡張時の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。拡張・縮小の割当失敗を個別に発生させる動的検査は未実施。
 

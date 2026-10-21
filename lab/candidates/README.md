@@ -1,8 +1,8 @@
 # 未検証の作業候補
 
-7.3.33 の統合候補には、遅延 OOM 中断、主要文字列関数の失敗可能な割当、`explode` の保留 OOM 時の中断と upload progress の各イベント・更新中の OOM 保留確認を含めました。直前差分は固定済み元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルドしました。各イベントの割当後ガードを追加した最新差分は fuzz なし実適用、増分ビルド、通常のセッション・multipart・進捗・JSON・各文字列関数と良性 soft OOM 後の同一ワーカー再利用を確認しました。最新パッチ SHA-256 は `b089ee1023b7eb0c4e8446ef6a2d1bd2e25bc9f3bcad37626632bfa1c5c4ca1b`、増分ビルドの `libphp7.so` は `d9f63cb24ad52f94d42bfc5f730ee262badcef24d3ec91a899bbe422515a84ca` です。大きな通常セッションを使った良性 multipart では、メモリ上限エラー後も同じワーカーが継続し、アプリのスクリプトは実行されませんでした。OOM の厳密な発生地点、最新差分全体のクリーンビルド、他の大型割当・再割当・両 CVE の全経路遮断は未確認です。
+7.3.33 の統合候補には、遅延 OOM 中断、主要文字列関数の失敗可能な割当、`explode` の保留 OOM 時の中断と upload progress の各イベント・更新中の OOM 保留確認を含めました。最新差分を固定済み元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルドと版別チェックを通過しました。通常のセッション・multipart・進捗・JSON・各文字列関数と良性 soft OOM 後の同一ワーカー再利用を確認しました。パッチ SHA-256 は `b089ee1023b7eb0c4e8446ef6a2d1bd2e25bc9f3bcad37626632bfa1c5c4ca1b`、クリーンビルドの `libphp7.so` は `e14e68478ef54c25051816cdf935cc0d89e34d7030b8aa750070042136d7e394` です。結果は `/private/tmp/php-backport-73-latest-clean/patch/7.3.33/` にあります。大きな通常セッションを使った良性 multipart では、メモリ上限エラー後も同じワーカーが継続し、アプリのスクリプトは実行されませんでした。OOM の厳密な発生地点、他の大型割当・再割当・両 CVE の全経路遮断は未確認です。
 
-`patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。結果は `pass` ですが、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
+`patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。その後、割当上限の桁あふれ防止を追加して fuzz なし dry-run、増分ビルドと同じ正常系を再確認しました。現行候補の SHA-256 は `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f` です。追加変更後のクリーンビルド、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
 
 `php-5.6.40-late-error.patch` は、既存の緊急差分に、post-RSHUTDOWN 後の `last_error_message`・`last_error_file` 消去を加えた合成差分です。PHP 5.6.40 の元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルド、通常セッション・multipart、進捗停止を確認しました。後処理診断による残存状態と両 CVE の全経路は未検証です。配布用 `patches/` には移していません。
 
