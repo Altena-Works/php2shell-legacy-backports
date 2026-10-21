@@ -16,6 +16,8 @@ PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から 
 
 2026-10-22 の追加照合では、元アーカイブのハッシュ確認、fuzz なしの適用、修正後の対象 7 ファイルの SHA-256 照合、既存の静的安全条件、Apache/mod_php の通常動作、良性 multipart 投稿を確認した。`checks/5.6.40.sh` は対象ファイルの一致を確認した後も、別経路が未調査のため終了コード 3 を保つ。これは公式最小バックポートで用いた**検証項目**へ近づけるものであり、同等の防御範囲を立証するものではない。
 
+同日の良性 `memory_limit` 超過検査では、現行の機能維持候補をロードした Apache ワーカーの HTTP 接続が `curl 52` で切れ、次の要求を別 PID のワーカーが処理した（PID 52 → 62）。これは現行の `_exit(1)` 経路を実機に近い構成で確認した結果であり、通常の soft OOM 後に同じワーカーを使える修正は未実装である。
+
 同じラボ構成で元ソースから無修正版を再ビルドした。無修正版は `baseline pass`、修正候補は既知の未完了判定による `fail (3)` で、どちらも `5.6.40 / apache2handler / SESSION_OK` を返した。良性 multipart 検査は無修正版が `MULTIPART_OK / SESSION_OK / PROGRESS_PRESENT`、修正候補が `MULTIPART_OK / SESSION_OK / PROGRESS_ABSENT`。ビルドした `libphp5.so` の SHA-256 は無修正版 `c3b5a44ec30bb84b085a42453ead4ff356aca41859f42ca0f19079965e1a054e`、修正候補 `40090cd73b758fbdf58ebbb82a6aa0a86fe6e8427ded9f49fa13dd1fb5bb1d58`。
 
 ## CVE-2026-109619

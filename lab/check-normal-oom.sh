@@ -45,11 +45,27 @@ done
     exit 1
 }
 
+curl_status=0
 headers=$(podman exec "$container_id" curl -sS --max-time 15 \
-    -D - -o /tmp/normal-limit-body http://127.0.0.1/normal-limit.php)
-body=$(podman exec "$container_id" cat /tmp/normal-limit-body)
-post=$(podman exec "$container_id" curl -fsS --max-time 5 \
-    http://127.0.0.1/normal-worker.php)
+    -D - -o /tmp/normal-limit-body http://127.0.0.1/normal-limit.php) || curl_status=$?
+body=$(podman exec "$container_id" cat /tmp/normal-limit-body 2>/dev/null || true)
+post=
+for _ in $(seq 1 30); do
+    if post=$(podman exec "$container_id" curl -fsS --max-time 2 \
+        http://127.0.0.1/normal-worker.php 2>/dev/null); then
+        break
+    fi
+    sleep 1
+done
+[[ $post == *$'\n'"$version"$'\n'apache2handler ]] || {
+    echo "Apache did not serve the next request: $post" >&2
+    exit 1
+}
+
+[[ $curl_status -eq 0 ]] || {
+    echo "memory_limit request lost its HTTP connection (curl $curl_status); worker before=${pre%%$'\n'*}, after=${post%%$'\n'*}" >&2
+    exit 1
+}
 
 [[ ${pre%%$'\n'*} == ${post%%$'\n'*} ]] || {
     echo 'Apache worker changed after a normal memory_limit error' >&2
