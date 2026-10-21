@@ -20,31 +20,14 @@
 ## 導入手順
 
 1. 稼働中の PHP の正確な版、配布元、SAPI、ビルド設定を確認し、現行のパッケージまたは Apache モジュールを退避します。対象版と一致する元ソースだけを使います。
-2. このリポジトリのルートで Bash を使い、次の例の `version` を上表のパッチがある版に変更して実行します。元ソースは [PHP 旧版アーカイブ](https://museum.php.net/)から取得し、保存済みの SHA-256 と照合します。
+2. リポジトリのルートで、対象版を指定して実行します。スクリプトは [PHP 旧版アーカイブ](https://museum.php.net/)から元ソースを取得し、保存済み SHA-256 との照合、fuzz なしのパッチ適用を行います。
 
-```bash
-( set -e
-repo_root="$PWD"
-version=7.3.29
-major="${version%%.*}"
-archive="php-$version.tar.gz"
-work_dir="$HOME/php-backport-apply/$version"
-mkdir -p "$work_dir"
-cd "$work_dir"
+   ```bash
+   ./apply-patch.sh 7.3.29
+   ```
 
-curl -fL --retry 3 "https://museum.php.net/php$major/$archive" -o "$archive"
-expected="$(awk -F '\t' -v v="$version" '$1 == v { print $2 }' "$repo_root/lab/source-hashes.tsv")"
-actual="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
-[[ -n "$expected" && "$actual" == "$expected" ]] || { echo 'source hash mismatch' >&2; exit 1; }
-
-tar -xzf "$archive"
-cd "php-$version"
-patch --dry-run --fuzz=0 --batch -p1 < "$repo_root/patches/php-$version.patch"
-patch --fuzz=0 --batch -p1 < "$repo_root/patches/php-$version.patch"
-)
-```
-
-3. `$HOME/php-backport-apply/<版>/php-<版>` の修正済みソースを、配布元の既存ビルド手順と同じ設定・拡張で再ビルドし、隔離した環境で PHP 版、Apache が読み込むモジュール、セッション、通常の multipart を確認します。Linux x86_64・Apache/mod_php の並列検証手順は [lab/README.md](lab/README.md)にあります。元ソースのハッシュ照合は独立した署名検証の代わりにはなりません。
+   修正済みソースは `$HOME/php-backport-apply/<版>/php-<版>` にできます。既存の出力先は上書きしません。手元のアーカイブは `--archive /path/to/php-<版>.tar.gz`、別の保存先は `--output /path/to/work` で指定できます。SHA-256 照合は署名検証の代わりにはなりません。
+3. 修正済みソースを、配布元の既存ビルド手順と同じ設定・拡張で再ビルドし、隔離した環境で PHP 版、Apache が読み込むモジュール、セッション、通常の multipart を確認します。Linux x86_64・Apache/mod_php の並列検証手順は [lab/README.md](lab/README.md)にあります。
 4. 検証した成果物を本番の配布手順で導入し、全ワーカーを再起動します。実際の HTTP 応答から版と SAPI を確認し、問題があれば退避した成果物へ戻します。配布元独自の差分、PHP-FPM、LSAPI は別途検証が必要です。
 
 ## ライセンスと無保証

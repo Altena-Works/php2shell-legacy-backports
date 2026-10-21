@@ -5,6 +5,33 @@ source_tree=${1:?source tree required}
 version=${2:?version required}
 [[ $version == 5.6.40 ]] || { echo "unexpected version: $version" >&2; exit 2; }
 
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    else
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    fi
+}
+
+# Exact outputs of this emergency patch on the recorded PHP 5.6.40 tarball.
+# These hashes establish source identity, not complete CVE remediation.
+while read -r expected file_path; do
+    actual=$(sha256_file "$source_tree/$file_path")
+    [[ $actual == "$expected" ]] || {
+        echo "PHP 5.6.40 patched source mismatch: $file_path" >&2
+        exit 1
+    }
+done <<'HASHES'
+bf47f771c0b1e96482e2d67c596061d0d303c1226593ad4b4bc68a0ffde07373 Zend/zend_alloc.c
+c4886c4180837efe408b8baf562cedd44f20e36ae7259e625f8918b474931604 Zend/zend_alloc.h
+46939bf170b0120feeeff13ae8c773c35b5c8b512d9f4d254a22c6f638f20660 Zend/zend_execute_API.c
+67cf5057ef9fe677a639fe8fd8205e8ef45bdd05c4f88104763df35f9e7715c2 Zend/zend_strtod.c
+d8754daaf77ce241422b3a06fe9e01c0c377773e9922bd4f2368f17ddc420ab6 ext/session/session.c
+d7339b04f9d3718b62947db250b7ce51e2008d8843e16edd64f4952ba2e9c2f7 main/SAPI.c
+75200e1393fa951b1b99d6b0a0ddbcf7d94047ad95269aa3586522368dc4e261 main/main.c
+HASHES
+echo 'PHP 5.6.40 patched source identity verified'
+
 python3 - "$source_tree/Zend" <<'PY'
 from pathlib import Path
 import sys

@@ -32,3 +32,10 @@ lab/run-matrix.sh --mode patch \
 単一版だけ試す場合は、例えば `--versions 7.3.29 --jobs 1` に変更します。無修正の比較は `--mode baseline` とし、パッチモードとは異なる `--results-dir` を指定します。結果は `$results_dir/<mode>/<版>/` の `status`、`runtime.txt`、`defense-check.log`、各ビルドログに残ります。作業木は `$results_dir/work/<版>/` です。パッチ変更後も新しい `--results-dir` を使い、以前の差分に重ねて適用しません。
 
 `pass` は厳密なパッチ適用、ビルド、Apache のロードモジュール一致、通常 HTTP・セッション、版別のソース検査が通った意味です。悪用不能性の証明ではありません。5.6.40 の `fail (3)` は、通常動作と選択した防御条件を確認したうえで、CVE-2026-109619 の別経路が未検証であることを示す意図的な未完了判定です。詳細は `runtime.txt` と `defense-check.log` を確認してください。
+
+upload progress の機能制限は、通常の小さな multipart 投稿で別途確認できます。この検査は管理設定で progress を有効、cleanup を無効にした上で、修正済み版では `PROGRESS_ABSENT` を期待します。
+
+```bash
+version=8.1.34
+lab/check-multipart-progress.sh "$results_dir/work/$version/php-$version" "$version" PROGRESS_ABSENT
+```

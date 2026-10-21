@@ -8,4 +8,6 @@
 
 `lab/run-matrix.sh` の fuzz なし適用、ソース検査、ビルド、Apache モジュールのファイル一致、HTTP 応答は `pass`。応答は `8.0.30 / apache2handler / SESSION_OK`。別の通常 multipart 投稿では `$_POST` と `$_FILES` を確認し、`MULTIPART_OK` を得た。テストは外部ポートを開かない `linux/amd64` コンテナで実施した。
 
+追加の良性検査では `session.upload_progress.enabled=On`、`cleanup=Off` として投稿し、`MULTIPART_OK / SESSION_OK / PROGRESS_ABSENT` を確認した。
+
 これらは通常機能の回帰確認であり、両 CVE の悪用不能性を実証しない。PHP-FPM、LSAPI、配布元独自ビルド、ネイティブ x86_64 の競合タイミングは未検証。
