@@ -10,6 +10,8 @@
 4. CVE-2026-109618 の暫定策として、管理者設定で `memory_limit=-1` を固定し、下位設定やアプリが有限値へ戻していないことを確認します。基盤の割当失敗は残るので完全対策ではありません。必要ならワーカー単位のコンテナ／cgroup 制限を可用性境界として使います。`RLIMIT_AS` と `RLIMIT_DATA` は割当失敗を誘発し得るため代用しません。
 5. `post_max_size` は用途に合わせて小さくし、`upload_max_filesize` をその値より小さくします。公式告知はアップロード不要なら 8M、必要なら 32M を暫定値として示します。`disable_functions` による `system` 等の停止は他の実行経路を塞がず、アプリ互換性にも影響するため、両 CVE の修正として数えません。
 
+このリポジトリの緊急パッチでは、通常の `memory_limit` 超過でもワーカーが終了します。導入時は Apache のワーカー終了数、再起動頻度、5xx、処理待ちを監視し、増加した場合に切り戻せるようにします。これを通常の PHP のメモリ不足エラーと同じ挙動として扱わないでください。
+
 この順序は暫定策です。[OOM の公式アドバイザリ](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)と[状態管理の公式アドバイザリ](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp)はいずれも、完全な緩和には更新が必要としています。
 
 ## ログと WAF で見る指標
