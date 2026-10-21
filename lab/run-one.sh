@@ -96,11 +96,17 @@ fi
 
 container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$source_tree:$mount_path" -v "$script_dir/health.php:/var/www/html/health.php:ro" \
-    -e PHP_SRC_PATH="$mount_path" -w "$mount_path" "$image" bash -lc '
+    -e PHP_SRC_PATH="$mount_path" -e PHP_MATRIX_VERSION="$version" \
+    -w "$mount_path" "$image" bash -lc '
         set -e
         if [ ! -f Makefile ]; then
+            case "$PHP_MATRIX_VERSION" in
+                7.*) set -- --enable-json --enable-filter ;;
+                *) set -- ;;
+            esac
             ./configure --prefix=/opt/php-backport --with-apxs2=/usr/bin/apxs \
                 --disable-all --enable-session --disable-cgi --without-pear \
+                "$@" \
                 > "$PHP_SRC_PATH/configure.log" 2>&1
         fi
         make -j2 >> "$PHP_SRC_PATH/make.log" 2>&1

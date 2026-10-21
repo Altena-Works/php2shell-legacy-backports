@@ -54,3 +54,5 @@ result=$(podman exec "$container_id" bash -lc '
 ')
 printf '%s\n' "$result"
 [[ $result == $'SEEDED\nMULTIPART_OK\nPRESERVED' ]]
+
+"$script_dir/candidates/check-json-oom.sh" "$source_tree"

@@ -9,7 +9,7 @@
 | 版 | 記録されている到達点 | 残る判定 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を固定済み公式アーカイブから fuzz なしで適用・クリーンビルド。Linux/amd64・Apache/mod_php で通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認 | 両 CVE の全経路遮断、soft OOM 後の同一ワーカー継続、他の設定・異常系は未確認 |
-| 7.3.33 | 機能維持候補に遅延OOM実験差分を重ね、Apache/mod_phpの通常セッション・multipart・進捗、良性soft OOM後の同一ワーカー再利用と代表的なhard limit超過後のワーカー交代を確認 | 別のOOM経路・両件の完全遮断は未実証 |
+| 7.3.33 | 機能維持候補に遅延 OOM と JSON 中断判定を追加。JSON/filter を含む Apache/mod_php の通常セッション・multipart・進捗、良性 JSON soft OOM 後の同一ワーカー再利用を確認 | 大きな単一割当・別の OOM 経路、両件の完全遮断は未実証 |
 | 5.0.5 / 5.1.6 / 5.2.17 / 5.3.29 | 公式アーカイブの SHA-256 を固定。session ソースに upload progress シンボルなし | OOM と他の要求間状態、実行動作は未判定 |
 | 5.4.45 / 5.5.38 / 7.0.33 / 7.1.33 / 7.2.34 | 対応パッチは未完成 | 導入対象外 |
 
@@ -44,6 +44,8 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 7.3.33 機能維持候補にも同じ basic/URL リライター早期要求リセットを移植した。固定済み公式アーカイブの展開ソースへ fuzz なしで適用でき、続く遅延 OOM 実験差分も fuzz なしで適用できる。Linux/amd64・Apache/mod_php の増分ビルドと、通常セッション・multipart・進捗・無害な `Serializable` 値維持を確認した。生成済み `var_unserializer.c` のビルド木とパッチ結果の差は re2c の版表示と `#line` 指示だけで、他の27ファイルは一致した。異常終了後の残存状態と両 CVE の全経路は未判定。
 
 二段差分を統合した[7.3.33実験候補](lab/candidates/patches/php-7.3.33.patch)を固定済み公式アーカイブから `lab/run-matrix.sh` でクリーン適用・ビルドした。結果は `pass`、`7.3.33 / apache2handler / SESSION_OK`、通常 multipart・進捗・`Serializable` 値維持。別の良性検査で通常 soft OOM と配列復号中の soft OOM を報告し、同じ Apache ワーカーが次要求を処理した。結果は `/private/tmp/php-backport-73-early-stack-results/`、ビルドした `libphp7.so` の SHA-256 は `7f6e3be92014a331be970df76481a4e54cece9f0b987b2ddfa7e776827941637`。両 CVE の全入口や他の拡張・保存形式は未判定で、配布用 `patches/` には移していない。
+
+同候補の `ext/json/json_encoder.c` に、遅延 OOM を `JSON_PARTIAL_OUTPUT_ON_ERROR` で握りつぶさず中断する判定を追加した。ラボの `--disable-all` では JSON がビルドされないことを検査で発見し、PHP 7 系は JSON と filter を明示して再ビルドした。固定済み公式アーカイブからの fuzz なし適用、クリーンビルド、`7.3.33 / apache2handler / SESSION_OK`、通常 multipart・進捗、通常 JSON と従来の部分出力、良性 JSON soft OOM の報告と同一ワーカー再利用を確認した。結果は `/private/tmp/php-backport-73-json-enabled-results/`、候補パッチ SHA-256 は `420639ebcffe803c55b989fc137438b694ace0937ada453f996a3cd2e4c02a5a`、`libphp7.so` は `71ead20c53fa2722d4e790c5da206b00ce0a205f503371a75cb742493e717708`。大きな単一割当向けの fallible API や他の JSON 経路は未実装で、両 CVE の全経路遮断は未判定。
 
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
