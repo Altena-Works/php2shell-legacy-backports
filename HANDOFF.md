@@ -27,6 +27,8 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
+同候補の `main/main.c` に、公式 8.2.35 の終了境界に合わせた post-RSHUTDOWN 後の `last_error` 再消去を追加した。元ソースへの fuzz なし dry-run、Linux/amd64 の増分コンパイル、上記の正常系再実行は通過。後処理診断の動的な経路確認と CVE-2026-109619 全入口の遮断は未実施。
+
 ## 次の作業
 
 1. [設計書の対応表](BACKPORT-DESIGN.md#遅延-oom-の移植境界)に沿い、7.3.33 の既存 VM 割り込みを起点に遅延 OOM の配送境界を実装する。5.6.40 は同じ VM 経路がないため独立設計とする。

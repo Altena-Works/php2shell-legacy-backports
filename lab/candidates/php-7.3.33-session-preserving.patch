@@ -1151,7 +1151,35 @@
  
  	STD_PHP_INI_BOOLEAN("allow_url_fopen",		"1",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_fopen,		php_core_globals,		core_globals)
  	STD_PHP_INI_BOOLEAN("allow_url_include",	"0",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_include,		php_core_globals,		core_globals)
-@@ -1918,6 +1919,8 @@
+@@ -1628,9 +1629,9 @@
+ }
+ /* }}} */
+ 
+-/* {{{ php_free_request_globals
+- */
+-static void php_free_request_globals(void)
++/* {{{ php_clear_last_error
++ */
++static void php_clear_last_error(void)
+ {
+ 	if (PG(last_error_message)) {
+ 		free(PG(last_error_message));
+@@ -1640,6 +1641,14 @@
+ 		free(PG(last_error_file));
+ 		PG(last_error_file) = NULL;
+ 	}
++}
++/* }}} */
++
++/* {{{ php_free_request_globals
++ */
++static void php_free_request_globals(void)
++{
++	php_clear_last_error();
+ 	if (PG(php_sys_temp_dir)) {
+ 		efree(PG(php_sys_temp_dir));
+ 		PG(php_sys_temp_dir) = NULL;
+@@ -1918,6 +1927,8 @@
  
  		for (i=0; i<NUM_TRACK_VARS; i++) {
  			zval_ptr_dtor(&PG(http_globals)[i]);
@@ -1160,7 +1188,16 @@
  		}
  	} zend_end_try();
  
-@@ -1971,6 +1974,9 @@
+@@ -1947,6 +1958,8 @@
+ 
+ 	/* 15. Free Willy (here be crashes) */
+ 	zend_interned_strings_deactivate();
++	/* Diagnostics during post-RSHUTDOWN may have set request-owned data again. */
++	php_clear_last_error();
+ 	zend_try {
+ 		shutdown_memory_manager(CG(unclean_shutdown) || !report_memleaks, 0);
+ 	} zend_end_try();
+@@ -1971,6 +1984,9 @@
  #ifdef HAVE_DTRACE
  	DTRACE_REQUEST_SHUTDOWN(SAFE_FILENAME(SG(request_info).path_translated), SAFE_FILENAME(SG(request_info).request_uri), (char *)SAFE_FILENAME(SG(request_info).request_method));
  #endif /* HAVE_DTRACE */
