@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "$0")" && pwd)
 mode=patch
 jobs=2
-versions=5.6.40,7.3.29,7.3.33
+versions=
 source_dir=/private/tmp/php-backport-sources
 results_dir=/private/tmp/php-backport-results
 patch_dir=
@@ -28,6 +28,13 @@ done
 [[ $mode == patch || $mode == baseline ]] || { echo 'mode must be patch or baseline' >&2; exit 2; }
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo 'jobs must be positive' >&2; exit 2; }
 [[ $timeout_seconds =~ ^[1-9][0-9]*$ ]] || { echo 'timeout must be positive' >&2; exit 2; }
+if [[ -z $versions ]]; then
+    if [[ $mode == patch ]]; then
+        versions=5.6.40,7.3.33
+    else
+        versions=$(cut -f1 "$script_dir/source-hashes.tsv" | paste -sd, -)
+    fi
+fi
 if [[ $mode == patch && -z $patch_dir ]]; then
     echo '--patch-dir is required in patch mode' >&2
     exit 2

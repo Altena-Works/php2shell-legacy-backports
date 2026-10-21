@@ -48,3 +48,5 @@ printf '%s\n' 'Feature limitation: session.upload_progress is disabled by this p
 printf '%s\n' 'Compatibility change: multipart parts gain a default limit and only the first used header is kept.'
 printf '%s\n' 'Compatibility change: an out-of-memory condition exits the worker immediately.'
 printf '%s\n' 'This check plus ordinary Apache/session health does not prove complete remediation of both CVEs.'
+printf '%s\n' 'CVE-2026-109618 and CVE-2026-109619: official-equivalent, feature-preserving remediation remains incomplete.' >&2
+exit 3

@@ -684,17 +684,437 @@
  			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
  			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
  			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+--- a/ext/session/php_session.h
++++ b/ext/session/php_session.h
+@@ -194,6 +194,7 @@
+ 	int define_sid;
+ 
+ 	php_session_rfc1867_progress *rfc1867_progress;
++	zend_bool in_rfc1867_update;
+ 	zend_bool rfc1867_enabled; /* session.upload_progress.enabled */
+ 	zend_bool rfc1867_cleanup; /* session.upload_progress.cleanup */
+ 	char *rfc1867_prefix;  /* session.upload_progress.prefix */
 --- a/ext/session/session.c
 +++ b/ext/session/session.c
-@@ -3160,7 +3160,7 @@
+@@ -120,6 +120,7 @@
+ 	PS(define_sid) = 1;
+ 	PS(session_vars) = NULL;
+ 	PS(module_number) = my_module_number;
++	PS(in_rfc1867_update) = 0;
+ 	ZVAL_UNDEF(&PS(http_session_vars));
+ }
+ /* }}} */
+@@ -835,13 +836,29 @@
+ /* ***************
+    * Serializers *
+    *************** */
++
++static void php_session_unserialize_init(php_unserialize_data_t *data)
++{
++	PHP_VAR_UNSERIALIZE_INIT(*data);
++	if (PS(in_rfc1867_update)) {
++		php_var_unserialize_set_incomplete_classes_only(*data, 1);
++	}
++}
++
++static void php_session_serialize_init(php_serialize_data_t *data)
++{
++	PHP_VAR_SERIALIZE_INIT(*data);
++	if (PS(in_rfc1867_update)) {
++		php_var_serialize_set_incomplete_classes_only(*data, 1);
++	}
++}
+ PS_SERIALIZER_ENCODE_FUNC(php_serialize) /* {{{ */
+ {
+ 	smart_str buf = {0};
+ 	php_serialize_data_t var_hash;
+ 
+ 	IF_SESSION_VARS() {
+-		PHP_VAR_SERIALIZE_INIT(var_hash);
++		php_session_serialize_init(&var_hash);
+ 		php_var_serialize(&buf, Z_REFVAL(PS(http_session_vars)), &var_hash);
+ 		PHP_VAR_SERIALIZE_DESTROY(var_hash);
+ 	}
+@@ -858,7 +875,7 @@
+ 	zend_string *var_name = zend_string_init("_SESSION", sizeof("_SESSION") - 1, 0);
+ 
+ 	ZVAL_NULL(&session_vars);
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 	result = php_var_unserialize(
+ 		&session_vars, (const unsigned char **)&val, (const unsigned char *)endptr, &var_hash);
+ 	PHP_VAR_UNSERIALIZE_DESTROY(var_hash);
+@@ -891,7 +908,7 @@
+ 	php_serialize_data_t var_hash;
+ 	PS_ENCODE_VARS;
+ 
+-	PHP_VAR_SERIALIZE_INIT(var_hash);
++	php_session_serialize_init(&var_hash);
+ 
+ 	PS_ENCODE_LOOP(
+ 			if (ZSTR_LEN(key) > PS_BIN_MAX) continue;
+@@ -916,7 +933,7 @@
+ 	php_unserialize_data_t var_hash;
+ 	zval *current, rv;
+ 
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 
+ 	for (p = val; p < endptr; ) {
+ 		namelen = ((unsigned char)(*p)) & (~PS_BIN_UNDEF);
+@@ -957,7 +974,7 @@
+ 	php_serialize_data_t var_hash;
+ 	PS_ENCODE_VARS;
+ 
+-	PHP_VAR_SERIALIZE_INIT(var_hash);
++	php_session_serialize_init(&var_hash);
+ 
+ 	PS_ENCODE_LOOP(
+ 		smart_str_appendl(&buf, ZSTR_VAL(key), ZSTR_LEN(key));
+@@ -987,7 +1004,7 @@
+ 	php_unserialize_data_t var_hash;
+ 	zval *current, rv;
+ 
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 
+ 	p = val;
+ 
+@@ -2916,6 +2933,7 @@
+ 	ps_globals->mod = NULL;
+ 	ps_globals->serializer = NULL;
+ 	ps_globals->mod_data = NULL;
++	ps_globals->in_rfc1867_update = 0;
+ 	ps_globals->session_status = php_session_none;
+ 	ps_globals->default_mod = NULL;
+ 	ps_globals->mod_user_implemented = 0;
+@@ -3127,8 +3145,11 @@
+ 		progress->next_update = Z_LVAL_P(progress->post_bytes_processed) + progress->update_step;
+ 	}
+ 
+-	php_session_initialize();
+-	PS(session_status) = php_session_active;
++	PS(in_rfc1867_update) = 1;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
+ 	IF_SESSION_VARS() {
+ 		zval *sess_var = Z_REFVAL(PS(http_session_vars));
+ 		SEPARATE_ARRAY(sess_var);
+@@ -3138,18 +3159,23 @@
+ 		zend_hash_update(Z_ARRVAL_P(sess_var), progress->key.s, &progress->data);
+ 	}
+ 	php_session_flush(1);
++	PS(in_rfc1867_update) = 0;
+ } /* }}} */
+ 
+ static void php_session_rfc1867_cleanup(php_session_rfc1867_progress *progress) /* {{{ */
+ {
+-	php_session_initialize();
+-	PS(session_status) = php_session_active;
++	PS(in_rfc1867_update) = 1;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
+ 	IF_SESSION_VARS() {
+ 		zval *sess_var = Z_REFVAL(PS(http_session_vars));
+ 		SEPARATE_ARRAY(sess_var);
+ 		zend_hash_del(Z_ARRVAL_P(sess_var), progress->key.s);
+ 	}
+ 	php_session_flush(1);
++	PS(in_rfc1867_update) = 0;
+ } /* }}} */
+ 
+ static int php_session_rfc1867_callback(unsigned int event, void *event_data, void **extra) /* {{{ */
+@@ -3160,7 +3186,7 @@
  	if (php_session_rfc1867_orig_callback) {
  		retval = php_session_rfc1867_orig_callback(event, event_data, extra);
  	}
 -	if (!PS(rfc1867_enabled)) {
-+	if (!PS(rfc1867_enabled) || true) {
++	if (!PS(rfc1867_enabled) || PG(modules_activated)) {
  		return retval;
  	}
  
+@@ -3169,6 +3195,7 @@
+ 	switch(event) {
+ 		case MULTIPART_EVENT_START: {
+ 			multipart_event_start *data = (multipart_event_start *) event_data;
++			php_rinit_session_globals();
+ 			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
+ 			progress->content_length = data->content_length;
+ 			progress->sname_len  = strlen(PS(session_name));
+@@ -3326,6 +3353,11 @@
+ 			efree(progress);
+ 			progress = NULL;
+ 			PS(rfc1867_progress) = NULL;
++			{
++				zend_string *name = zend_string_init("_SESSION", sizeof("_SESSION") - 1, 0);
++				zend_delete_global_variable(name);
++				zend_string_release_ex(name, 0);
++			}
+ 		}
+ 		break;
+ 	}
+--- a/ext/standard/php_incomplete_class.h
++++ b/ext/standard/php_incomplete_class.h
+@@ -45,6 +45,7 @@
+ 
+ #define INCOMPLETE_CLASS "__PHP_Incomplete_Class"
+ #define MAGIC_MEMBER "__PHP_Incomplete_Class_Name"
++#define MAGIC_MEMBER_SERIALIZED "__PHP_Incomplete_Class_Serialized"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+--- a/ext/standard/php_var.h
++++ b/ext/standard/php_var.h
+@@ -45,11 +45,13 @@
+ PHPAPI int php_var_unserialize_intern(zval *rval, const unsigned char **p, const unsigned char *max, php_unserialize_data_t *var_hash);
+ 
+ PHPAPI php_serialize_data_t php_var_serialize_init(void);
++PHPAPI void php_var_serialize_set_incomplete_classes_only(php_serialize_data_t d, zend_bool enabled);
+ PHPAPI void php_var_serialize_destroy(php_serialize_data_t d);
+ PHPAPI php_unserialize_data_t php_var_unserialize_init(void);
+ PHPAPI void php_var_unserialize_destroy(php_unserialize_data_t d);
+ PHPAPI HashTable *php_var_unserialize_get_allowed_classes(php_unserialize_data_t d);
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes);
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled);
+ 
+ #define PHP_VAR_SERIALIZE_INIT(d) \
+ 	(d) = php_var_serialize_init()
+--- a/ext/standard/var.c
++++ b/ext/standard/var.c
+@@ -34,6 +34,7 @@
+ struct php_serialize_data {
+ 	HashTable ht;
+ 	uint32_t n;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ #define COMMON (is_ref ? "&" : "")
+@@ -698,6 +699,32 @@
+ }
+ /* }}} */
+ 
++static zend_bool php_var_serialize_incomplete_raw(smart_str *buf, zval *struc)
++{
++	zval *payload = zend_hash_str_find(Z_OBJPROP_P(struc), MAGIC_MEMBER_SERIALIZED,
++		sizeof(MAGIC_MEMBER_SERIALIZED) - 1);
++	zend_string *class_name;
++
++	if (!payload || Z_TYPE_P(payload) != IS_STRING) {
++		return 0;
++	}
++	class_name = php_lookup_class_name(struc);
++	if (!class_name) {
++		return 0;
++	}
++	smart_str_appendl(buf, "C:", 2);
++	smart_str_append_unsigned(buf, ZSTR_LEN(class_name));
++	smart_str_appendl(buf, ":\"", 2);
++	smart_str_append(buf, class_name);
++	smart_str_appendl(buf, "\":", 2);
++	smart_str_append_unsigned(buf, Z_STRLEN_P(payload));
++	smart_str_appendl(buf, ":{", 2);
++	smart_str_append(buf, Z_STR_P(payload));
++	smart_str_appendc(buf, '}');
++	zend_string_release_ex(class_name, 0);
++	return 1;
++}
++
+ static int php_var_serialize_call_sleep(zval *retval, zval *struc) /* {{{ */
+ {
+ 	zval fname;
+@@ -892,6 +919,11 @@
+ 
+ 		case IS_OBJECT: {
+ 				zend_class_entry *ce = Z_OBJCE_P(struc);
++
++				if (ce == PHP_IC_ENTRY && var_hash->incomplete_classes_only
++						&& php_var_serialize_incomplete_raw(buf, struc)) {
++					return;
++				}
+ 
+ 				if (ce->serialize != NULL) {
+ 					/* has custom handler */
+@@ -1032,6 +1064,7 @@
+ 		d = emalloc(sizeof(struct php_serialize_data));
+ 		zend_hash_init(&d->ht, 16, NULL, ZVAL_PTR_DTOR, 0);
+ 		d->n = 0;
++		d->incomplete_classes_only = 0;
+ 		if (!BG(serialize_lock)) {
+ 			BG(serialize).data = d;
+ 			BG(serialize).level = 1;
+@@ -1041,6 +1074,10 @@
+ 		++BG(serialize).level;
+ 	}
+ 	return d;
++}
++
++PHPAPI void php_var_serialize_set_incomplete_classes_only(php_serialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
+ }
+ 
+ PHPAPI void php_var_serialize_destroy(php_serialize_data_t d) {
+--- a/ext/standard/var_unserializer.c
++++ b/ext/standard/var_unserializer.c
+@@ -28,6 +28,7 @@
+ 	void *first_dtor;
+ 	void *last_dtor;
+ 	HashTable *allowed_classes;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ PHPAPI php_unserialize_data_t php_var_unserialize_init() {
+@@ -62,6 +63,9 @@
+ }
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes) {
+ 	d->allowed_classes = classes;
++}
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
+ }
+ 
+ 
+@@ -396,6 +400,13 @@
+ 		ZVAL_UNDEF(&key);
+ 
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
++			zval_ptr_dtor(&key);
++			return 0;
++		}
++
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
+ 			return 0;
+ 		}
+@@ -526,7 +537,7 @@
+ 	return 1;
+ }
+ 
+-static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce)
++static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce, zend_bool keep_payload)
+ {
+ 	zend_long datalen;
+ 
+@@ -546,7 +557,13 @@
+ 		return 0;
+ 	}
+ 
+-	if (ce->unserialize == NULL) {
++	if (keep_payload) {
++		zval payload;
++		ZVAL_STRINGL(&payload, (const char *) *p, datalen);
++		object_init_ex(rval, PHP_IC_ENTRY);
++		zend_hash_str_update(Z_OBJPROP_P(rval), MAGIC_MEMBER_SERIALIZED,
++			sizeof(MAGIC_MEMBER_SERIALIZED) - 1, &payload);
++	} else if (ce->unserialize == NULL) {
+ 		zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
+ 		object_init_ex(rval, ce);
+ 	} else if (ce->unserialize(rval, ce, (const unsigned char*)*p, datalen, (zend_unserialize_data *)var_hash) != SUCCESS) {
+@@ -1202,6 +1219,11 @@
+ 	class_name = zend_string_init(str, len, 0);
+ 
+ 	do {
++		if ((*var_hash)->incomplete_classes_only) {
++			incomplete_class = 1;
++			ce = PHP_IC_ENTRY;
++			break;
++		}
+ 		if(!unserialize_allowed_class(class_name, var_hash)) {
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1281,7 +1303,7 @@
+ 	if (custom_object) {
+ 		int ret;
+ 
+-		ret = object_custom(UNSERIALIZE_PASSTHRU, ce);
++		ret = object_custom(UNSERIALIZE_PASSTHRU, ce, (*var_hash)->incomplete_classes_only);
+ 
+ 		if (ret && incomplete_class) {
+ 			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
+--- a/ext/standard/var_unserializer.re
++++ b/ext/standard/var_unserializer.re
+@@ -27,6 +27,7 @@
+ 	void *first_dtor;
+ 	void *last_dtor;
+ 	HashTable *allowed_classes;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ PHPAPI php_unserialize_data_t php_var_unserialize_init() {
+@@ -61,6 +62,9 @@
+ }
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes) {
+ 	d->allowed_classes = classes;
++}
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
+ }
+ 
+ 
+@@ -402,6 +406,13 @@
+ 		ZVAL_UNDEF(&key);
+ 
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
++			zval_ptr_dtor(&key);
++			return 0;
++		}
++
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
+ 			return 0;
+ 		}
+@@ -532,7 +543,7 @@
+ 	return 1;
+ }
+ 
+-static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce)
++static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce, zend_bool keep_payload)
+ {
+ 	zend_long datalen;
+ 
+@@ -552,7 +563,13 @@
+ 		return 0;
+ 	}
+ 
+-	if (ce->unserialize == NULL) {
++	if (keep_payload) {
++		zval payload;
++		ZVAL_STRINGL(&payload, (const char *) *p, datalen);
++		object_init_ex(rval, PHP_IC_ENTRY);
++		zend_hash_str_update(Z_OBJPROP_P(rval), MAGIC_MEMBER_SERIALIZED,
++			sizeof(MAGIC_MEMBER_SERIALIZED) - 1, &payload);
++	} else if (ce->unserialize == NULL) {
+ 		zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
+ 		object_init_ex(rval, ce);
+ 	} else if (ce->unserialize(rval, ce, (const unsigned char*)*p, datalen, (zend_unserialize_data *)var_hash) != SUCCESS) {
+@@ -964,6 +981,11 @@
+ 	class_name = zend_string_init(str, len, 0);
+ 
+ 	do {
++		if ((*var_hash)->incomplete_classes_only) {
++			incomplete_class = 1;
++			ce = PHP_IC_ENTRY;
++			break;
++		}
+ 		if(!unserialize_allowed_class(class_name, var_hash)) {
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1043,7 +1065,7 @@
+ 	if (custom_object) {
+ 		int ret;
+ 
+-		ret = object_custom(UNSERIALIZE_PASSTHRU, ce);
++		ret = object_custom(UNSERIALIZE_PASSTHRU, ce, (*var_hash)->incomplete_classes_only);
+ 
+ 		if (ret && incomplete_class) {
+ 			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
 --- a/main/SAPI.c
 +++ b/main/SAPI.c
 @@ -513,18 +513,23 @@
