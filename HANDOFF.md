@@ -21,7 +21,7 @@
 
 現行の独自移植候補（5.6.40 と 7.3 系）は、通常の `memory_limit` 超過でもワーカーを `_exit(1)` で終了させる。Apache/mod_php では繰り返しのワーカー終了が可用性を損なうおそれがある。単に以前の `zend_bailout()` へ戻すと CVE-2026-109618 の危険な早期脱出が復活するため、採用しない。
 
-7.3.33 の遅延 OOM 移植を調べ、7.3 の VM には公式 8.2 の内部巻き戻し例外がないことを確認した。VM 割り込みだけで保留 OOM を通知すると、演算結果の破棄と catch/finally の処理を安全に揃えられない。このため[実験差分](lab/candidates/php-7.3.33-delayed-oom.experimental.patch)で専用の巻き戻し状態、soft/hard limit、VM・関数呼び出し・POST終了境界、multipart・診断・デストラクタ・ストリーム出力の中断条件を組み合わせた。機能維持候補への fuzz なし適用と変更した16ソースファイルの差分一致を再確認した。Linux/amd64・Apache/mod_phpでビルドし、良性multipart・セッション・進捗の維持、通常のsoft limit超過のfatal表示と同一ワーカーの次要求処理、代表的なhard limit超過によるワーカー交代と後続要求成功を再確認した。10MBの通常フォーム入力による要求起動前のsoft OOMもログへ記録され、同じワーカーが次の要求を処理した。応答本文は空であり、上限到達の証拠にはログを用いた。**別のOOM経路、2件のCVEの全入口・異常系は未検証で、配布パッチには昇格していない。**
+7.3.33 の遅延 OOM 移植を調べ、7.3 の VM には公式 8.2 の内部巻き戻し例外がないことを確認した。VM 割り込みだけで保留 OOM を通知すると、演算結果の破棄と catch/finally の処理を安全に揃えられない。このため[実験差分](lab/candidates/php-7.3.33-delayed-oom.experimental.patch)で専用の巻き戻し状態、soft/hard limit、VM・関数呼び出し・POST終了境界、multipart・診断・デストラクタ・ストリーム出力、`debug_backtrace()` の構築中断条件を組み合わせた。機能維持候補への fuzz なし適用と変更した17ソースファイルの差分一致を確認した。Linux/amd64・Apache/mod_phpでビルドし、良性multipart・セッション・進捗の維持、通常のsoft limit超過のfatal表示と同一ワーカーの次要求処理、代表的なhard limit超過によるワーカー交代と後続要求成功を確認した。10MBの通常フォーム入力による要求起動前のsoft OOMもログへ記録され、同じワーカーが次の要求を処理した。応答本文は空であり、上限到達の証拠にはログを用いた。良性の `debug_backtrace()` と、その構築中のsoft OOM後の同一ワーカー再利用も[専用検査](lab/candidates/check-backtrace-oom.sh)で確認した。**別のOOM経路、2件のCVEの全入口・異常系は未検証で、配布パッチには昇格していない。**
 
 機能を維持する方針は、[PHP 8.2.35 の公式修正](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)と同様に、通常の上限到達を保留して VM の安全な位置で処理し、別の厳格な上限または実際の割当失敗に限ってワーカーを終了させる方式。7.3.33 の実験差分は一部を実装・良性検証したが、全境界を満たした判定ではない。5.6 には同じ VM 割り込みがなく、独立の実装が必要。対応箇所は[設計書](BACKPORT-DESIGN.md#遅延-oom-の移植境界)を参照する。
 

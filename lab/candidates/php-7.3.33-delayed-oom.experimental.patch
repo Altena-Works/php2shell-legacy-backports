@@ -244,6 +244,121 @@
  /*
   * Local variables:
   * tab-width: 4
+--- a/Zend/zend_builtin_functions.c
++++ b/Zend/zend_builtin_functions.c
+@@ -2159,7 +2159,7 @@
+ }
+ /* }}} */
+ 
+-static void debug_backtrace_get_args(zend_execute_data *call, zval *arg_array) /* {{{ */
++static zend_bool debug_backtrace_get_args(zend_execute_data *call, zval *arg_array) /* {{{ */
+ {
+ 	uint32_t num_args = ZEND_CALL_NUM_ARGS(call);
+ 
+@@ -2168,7 +2168,13 @@
+ 		zval *p = ZEND_CALL_ARG(call, 1);
+ 
+ 		array_init_size(arg_array, num_args);
++		if (ZEND_HAS_OOM()) {
++			goto oom;
++		}
+ 		zend_hash_real_init_packed(Z_ARRVAL_P(arg_array));
++		if (ZEND_HAS_OOM()) {
++			goto oom;
++		}
+ 		ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(arg_array)) {
+ 			if (call->func->type == ZEND_USER_FUNCTION) {
+ 				uint32_t first_extra_arg = MIN(num_args, call->func->op_array.num_args);
+@@ -2181,7 +2187,7 @@
+ 					zend_string *arg_name;
+ 					zval *arg;
+ 
+-					while (i < first_extra_arg) {
++					while (i < first_extra_arg && !ZEND_HAS_OOM()) {
+ 						arg_name = call->func->op_array.vars[i];
+ 						arg = zend_hash_find_ex_ind(call->symbol_table, arg_name, 1);
+ 						if (arg) {
+@@ -2195,7 +2201,7 @@
+ 						i++;
+ 					}
+ 				} else {
+-					while (i < first_extra_arg) {
++					while (i < first_extra_arg && !ZEND_HAS_OOM()) {
+ 						if (EXPECTED(Z_TYPE_INFO_P(p) != IS_UNDEF)) {
+ 							if (Z_OPT_REFCOUNTED_P(p)) {
+ 								Z_ADDREF_P(p);
+@@ -2211,7 +2217,7 @@
+ 				p = ZEND_CALL_VAR_NUM(call, call->func->op_array.last_var + call->func->op_array.T);
+ 			}
+ 
+-			while (i < num_args) {
++			while (i < num_args && !ZEND_HAS_OOM()) {
+ 				if (EXPECTED(Z_TYPE_INFO_P(p) != IS_UNDEF)) {
+ 					if (Z_OPT_REFCOUNTED_P(p)) {
+ 						Z_ADDREF_P(p);
+@@ -2224,10 +2230,19 @@
+ 				i++;
+ 			}
+ 		} ZEND_HASH_FILL_END();
+-		Z_ARRVAL_P(arg_array)->nNumOfElements = num_args;
++		Z_ARRVAL_P(arg_array)->nNumOfElements = i;
+ 	} else {
+ 		ZVAL_EMPTY_ARRAY(arg_array);
+ 	}
++	if (ZEND_HAS_OOM()) {
++		goto oom;
++	}
++	return 1;
++
++oom:
++	zval_ptr_dtor(arg_array);
++	ZVAL_EMPTY_ARRAY(arg_array);
++	return 0;
+ }
+ /* }}} */
+ 
+@@ -2353,7 +2368,13 @@
+ 			}
+ 			if (func->type != ZEND_EVAL_CODE) {
+ 				if ((options & DEBUG_BACKTRACE_IGNORE_ARGS) == 0) {
+-					debug_backtrace_get_args(call, &arg_array);
++					if (!debug_backtrace_get_args(call, &arg_array)) {
++						if (class_name && object && !func->common.scope
++							&& object->handlers->get_class_name != zend_std_get_class_name) {
++							zend_string_release_ex(class_name, 0);
++						}
++						return;
++					}
+ 				}
+ 			}
+ 		} else {
+@@ -2593,7 +2614,10 @@
+ 			if ((options & DEBUG_BACKTRACE_IGNORE_ARGS) == 0 &&
+ 				func->type != ZEND_EVAL_CODE) {
+ 
+-				debug_backtrace_get_args(call, &tmp);
++				if (!debug_backtrace_get_args(call, &tmp)) {
++					zend_array_destroy(Z_ARRVAL(stack_frame));
++					return;
++				}
+ 				zend_hash_add_new(Z_ARRVAL(stack_frame), ZSTR_KNOWN(ZEND_STR_ARGS), &tmp);
+ 			}
+ 		} else {
+@@ -2649,7 +2673,14 @@
+ 			zend_hash_add_new(Z_ARRVAL(stack_frame), ZSTR_KNOWN(ZEND_STR_FUNCTION), &tmp);
+ 		}
+ 
++		if (ZEND_HAS_OOM()) {
++			zend_array_destroy(Z_ARRVAL(stack_frame));
++			return;
++		}
+ 		zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &stack_frame);
++		if (ZEND_HAS_OOM()) {
++			return;
++		}
+ 
+ 		include_filename = filename;
+ 
 --- a/Zend/zend_globals.h
 +++ b/Zend/zend_globals.h
 @@ -174,6 +174,7 @@
