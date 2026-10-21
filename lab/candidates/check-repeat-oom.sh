@@ -46,7 +46,28 @@ post=$(podman exec "$container_id" curl -fsS --max-time 5 \
 [[ $limited == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
     printf 'expected soft OOM missing: %s\n' "$limited" >&2; exit 1;
 }
+[[ $limited != *RETURNED* ]] || {
+    printf 'request continued after soft OOM: %s\n' "$limited" >&2; exit 1;
+}
 [[ ${pre%%$'\n'*} == ${post%%$'\n'*} ]] || {
     printf 'Apache worker changed after soft OOM\n' >&2; exit 1;
 }
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED WORKER_REUSED
+
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/repeat-aggregate.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1&aggregate=1' >/dev/null
+aggregate=$(podman exec "$container_id" tail -c 500 /tmp/repeat-aggregate.out)
+after_aggregate=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $aggregate == *RETAINED* ]] || {
+    printf 'first retained allocation did not complete: %s\n' "$aggregate" >&2; exit 1;
+}
+[[ $aggregate == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
+    printf 'aggregate soft OOM missing: %s\n' "$aggregate" >&2; exit 1;
+}
+[[ $aggregate != *RETURNED* ]] || {
+    printf 'request continued after aggregate soft OOM: %s\n' "$aggregate" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_aggregate%%$'\n'*} ]] || {
+    printf 'Apache worker changed after aggregate soft OOM\n' >&2; exit 1;
+}
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED WORKER_REUSED

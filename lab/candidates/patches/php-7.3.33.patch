@@ -69,15 +69,18 @@
  
  #ifdef HAVE_SIGNAL_H
  # include <signal.h>
-@@ -245,6 +247,7 @@
+@@ -245,8 +247,10 @@
  #endif
  #if ZEND_MM_LIMIT
  	size_t             limit;                   /* memory limit */
 +	size_t             hard_limit;              /* fatal allocation ceiling */
  	int                overflow;                /* memory overflow flag */
  #endif
++	zend_bool          fallible;                /* return NULL at the soft limit */
  
-@@ -358,7 +361,42 @@
+ 	zend_mm_huge_list *huge_list;               /* list of huge allocated blocks */
+ 
+@@ -358,7 +362,42 @@
  #if ZEND_DEBUG && defined(HAVE_KILL) && defined(HAVE_GETPID)
  	kill(getpid(), SIGSEGV);
  #endif
@@ -121,7 +124,7 @@
  }
  
  static ZEND_COLD ZEND_NORETURN void zend_mm_safe_error(zend_mm_heap *heap,
-@@ -370,23 +408,77 @@
+@@ -370,23 +409,79 @@
  #endif
  	size_t size)
  {
@@ -191,10 +194,10 @@
 +}
 +
 +#if ZEND_MM_LIMIT
-+static zend_always_inline void zend_mm_check_soft_hard_limit(
++static zend_always_inline zend_bool zend_mm_check_soft_hard_limit(
 +		zend_mm_heap *heap, size_t add_size, size_t requested_size ZEND_FILE_LINE_DC)
 +{
-+	if (UNEXPECTED(heap->hard_limit < heap->real_size ||
++	if (!heap->fallible && UNEXPECTED(heap->hard_limit < heap->real_size ||
 +		add_size > heap->hard_limit - heap->real_size)) {
 +		zend_mm_safe_error_ex("Hard memory limit of %zu bytes exhausted (tried to allocate %zu bytes)",
 +			heap->hard_limit, requested_size);
@@ -210,13 +213,15 @@
 +				heap->limit, requested_size);
 +#endif
 +		}
++		return !heap->fallible;
 +	}
++	return 1;
 +}
 +#endif
  
  #ifdef _WIN32
  void
-@@ -982,18 +1074,12 @@
+@@ -982,17 +1077,13 @@
  				heap->cached_chunks = chunk->next;
  			} else {
  #if ZEND_MM_LIMIT
@@ -232,12 +237,23 @@
 -#endif
 -						return NULL;
  					}
++				}
++				if (!zend_mm_check_soft_hard_limit(heap, ZEND_MM_CHUNK_SIZE, ZEND_MM_PAGE_SIZE * pages_count ZEND_FILE_LINE_RELAY_CC)) {
++					return NULL;
  				}
-+				zend_mm_check_soft_hard_limit(heap, ZEND_MM_CHUNK_SIZE, ZEND_MM_PAGE_SIZE * pages_count ZEND_FILE_LINE_RELAY_CC);
  #endif
  				chunk = (zend_mm_chunk*)zend_mm_chunk_alloc(heap, ZEND_MM_CHUNK_SIZE, ZEND_MM_CHUNK_SIZE);
- 				if (UNEXPECTED(chunk == NULL)) {
-@@ -1352,7 +1438,7 @@
+@@ -1066,6 +1157,9 @@
+ #else
+ 	void *ptr = zend_mm_alloc_pages(heap, pages_count ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ #endif
++	if (UNEXPECTED(ptr == NULL)) {
++		return NULL;
++	}
+ #if ZEND_MM_STAT
+ 	do {
+ 		size_t size = heap->size + pages_count * ZEND_MM_PAGE_SIZE;
+@@ -1352,13 +1446,16 @@
  	size = MAX(size, 1);
  	size = ZEND_MM_ALIGNED_SIZE(size) + ZEND_MM_ALIGNED_SIZE(sizeof(zend_mm_debug_info));
  	if (UNEXPECTED(size < real_size)) {
@@ -246,7 +262,36 @@
  		return NULL;
  	}
  #endif
-@@ -1510,18 +1596,10 @@
+ 	if (EXPECTED(size <= ZEND_MM_MAX_SMALL_SIZE)) {
+ 		ptr = zend_mm_alloc_small(heap, size, ZEND_MM_SMALL_SIZE_TO_BIN(size) ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ #if ZEND_DEBUG
++		if (UNEXPECTED(ptr == NULL)) {
++			return NULL;
++		}
+ 		dbg = zend_mm_get_debug_info(heap, ptr);
+ 		dbg->size = real_size;
+ 		dbg->filename = __zend_filename;
+@@ -1370,6 +1467,9 @@
+ 	} else if (EXPECTED(size <= ZEND_MM_MAX_LARGE_SIZE)) {
+ 		ptr = zend_mm_alloc_large(heap, size ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ #if ZEND_DEBUG
++		if (UNEXPECTED(ptr == NULL)) {
++			return NULL;
++		}
+ 		dbg = zend_mm_get_debug_info(heap, ptr);
+ 		dbg->size = real_size;
+ 		dbg->filename = __zend_filename;
+@@ -1449,6 +1549,9 @@
+ 		size_t orig_real_peak = heap->real_peak;
+ #endif
+ 		ret = zend_mm_alloc_heap(heap, size ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
++		if (UNEXPECTED(ret == NULL)) {
++			return NULL;
++		}
+ 		memcpy(ret, ptr, copy_size);
+ 		zend_mm_free_heap(heap, ptr ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ #if ZEND_MM_STAT
+@@ -1510,17 +1613,11 @@
  			}
  		} else /* if (new_size > old_size) */ {
  #if ZEND_MM_LIMIT
@@ -263,12 +308,50 @@
 -				}
 +			if (UNEXPECTED(heap->limit < heap->real_size || new_size - old_size > heap->limit - heap->real_size)) {
 +				zend_mm_gc(heap);
++			}
++			if (!zend_mm_check_soft_hard_limit(heap, new_size - old_size, size ZEND_FILE_LINE_RELAY_CC)) {
++				return NULL;
  			}
-+			zend_mm_check_soft_hard_limit(heap, new_size - old_size, size ZEND_FILE_LINE_RELAY_CC);
  #endif
  			/* try to map tail right after this block */
- 			if (zend_mm_chunk_extend(heap, ptr, old_size, new_size)) {
-@@ -1800,22 +1878,14 @@
+@@ -1586,6 +1683,9 @@
+ 					if (old_bin_num > 0 && size < bin_data_size[old_bin_num - 1]) {
+ 						/* truncation */
+ 						ret = zend_mm_alloc_small(heap, size, ZEND_MM_SMALL_SIZE_TO_BIN(size) ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
++						if (UNEXPECTED(ret == NULL)) {
++							return NULL;
++						}
+ 						copy_size = use_copy_size ? MIN(size, copy_size) : size;
+ 						memcpy(ret, ptr, copy_size);
+ 						zend_mm_free_small(heap, ptr, old_bin_num);
+@@ -1602,6 +1702,9 @@
+ 						size_t orig_real_peak = heap->real_peak;
+ #endif
+ 						ret = zend_mm_alloc_small(heap, size, ZEND_MM_SMALL_SIZE_TO_BIN(size) ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
++						if (UNEXPECTED(ret == NULL)) {
++							return NULL;
++						}
+ 						copy_size = use_copy_size ? MIN(old_size, copy_size) : old_size;
+ 						memcpy(ret, ptr, copy_size);
+ 						zend_mm_free_small(heap, ptr, old_bin_num);
+@@ -1711,6 +1814,8 @@
+ static void zend_mm_add_huge_block(zend_mm_heap *heap, void *ptr, size_t size ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
+ #endif
+ {
++	zend_bool was_fallible = heap->fallible;
++	heap->fallible = 0;
+ 	zend_mm_huge_list *list = (zend_mm_huge_list*)zend_mm_alloc_heap(heap, sizeof(zend_mm_huge_list) ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ 	list->ptr = ptr;
+ 	list->size = size;
+@@ -1723,6 +1828,7 @@
+ 	list->dbg.orig_lineno = __zend_orig_lineno;
+ #endif
+ 	heap->huge_list = list;
++	heap->fallible = was_fallible;
+ }
+ 
+ static size_t zend_mm_del_huge_block(zend_mm_heap *heap, void *ptr ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
+@@ -1800,21 +1906,15 @@
  	void *ptr;
  
  	if (UNEXPECTED(new_size < size)) {
@@ -288,23 +371,26 @@
 -#endif
 -			return NULL;
 -		}
--	}
 +	if (UNEXPECTED(heap->limit < heap->real_size || new_size > heap->limit - heap->real_size)) {
 +		zend_mm_gc(heap);
 +	}
-+	zend_mm_check_soft_hard_limit(heap, new_size, size ZEND_FILE_LINE_RELAY_CC);
++	if (!zend_mm_check_soft_hard_limit(heap, new_size, size ZEND_FILE_LINE_RELAY_CC)) {
++		return NULL;
+ 	}
  #endif
  	ptr = zend_mm_chunk_alloc(heap, new_size, ZEND_MM_CHUNK_SIZE);
- 	if (UNEXPECTED(ptr == NULL)) {
-@@ -1919,6 +1989,7 @@
+@@ -1919,8 +2019,10 @@
  #endif
  #if ZEND_MM_LIMIT
  	heap->limit = ((size_t)Z_L(-1) >> (size_t)Z_L(1));
 +	heap->hard_limit = heap->limit;
  	heap->overflow = 0;
  #endif
++	heap->fallible = 0;
  #if ZEND_MM_CUSTOM
-@@ -2383,6 +2454,38 @@
+ 	heap->use_custom_heap = ZEND_MM_CUSTOM_HEAP_NONE;
+ #endif
+@@ -2383,6 +2485,38 @@
  static zend_alloc_globals alloc_globals;
  #endif
  
@@ -343,7 +429,34 @@
  ZEND_API int is_zend_mm(void)
  {
  #if ZEND_MM_CUSTOM
-@@ -2596,7 +2699,7 @@
+@@ -2574,6 +2708,26 @@
+ 	return erealloc_rel(ptr, zend_safe_address_guarded(nmemb, size, offset));
+ }
+ 
++ZEND_API void* ZEND_FASTCALL _femalloc(size_t size ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
++{
++	zend_mm_heap *heap = AG(mm_heap);
++	zend_bool was_fallible = heap->fallible;
++	void *ptr;
++
++	heap->fallible = 1;
++	ptr = _emalloc(size ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
++	heap->fallible = was_fallible;
++	return ptr;
++}
++
++ZEND_API void* ZEND_FASTCALL _safe_femalloc(size_t nmemb, size_t size, size_t offset ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
++{
++	if (!zend_mm_fallible_check(nmemb, size, offset)) {
++		return NULL;
++	}
++	return _femalloc(nmemb * size + offset ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
++}
++
+ ZEND_API void* ZEND_FASTCALL _safe_realloc(void *ptr, size_t nmemb, size_t size, size_t offset)
+ {
+ 	return perealloc(ptr, zend_safe_address_guarded(nmemb, size, offset), 1);
+@@ -2596,7 +2750,7 @@
  
  	length = strlen(s);
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -352,7 +465,7 @@
  	}
  	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
  	memcpy(p, s, length+1);
-@@ -2608,7 +2711,7 @@
+@@ -2608,7 +2762,7 @@
  	char *p;
  
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -361,7 +474,7 @@
  	}
  	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
  	memcpy(p, s, length);
-@@ -2622,7 +2725,7 @@
+@@ -2622,7 +2776,7 @@
  	char *p;
  
  	if (UNEXPECTED(length + 1 == 0)) {
@@ -370,7 +483,7 @@
  	}
  	p = (char *) malloc(length + 1);
  	if (UNEXPECTED(p == NULL)) {
-@@ -2639,7 +2742,14 @@
+@@ -2639,7 +2793,14 @@
  ZEND_API int zend_set_memory_limit(size_t memory_limit)
  {
  #if ZEND_MM_LIMIT
@@ -386,15 +499,18 @@
  #endif
  	return SUCCESS;
  }
-@@ -2866,6 +2976,7 @@
+@@ -2866,8 +3027,10 @@
  #endif
  #if ZEND_MM_LIMIT
  	heap->limit = (Z_L(-1) >> Z_L(1));
 +	heap->hard_limit = heap->limit;
  	heap->overflow = 0;
  #endif
++	heap->fallible = 0;
  #if ZEND_MM_CUSTOM
-@@ -2901,7 +3012,7 @@
+ 	heap->use_custom_heap = 0;
+ #endif
+@@ -2901,7 +3064,7 @@
  static ZEND_COLD ZEND_NORETURN void zend_out_of_memory(void)
  {
  	fprintf(stderr, "Out of memory\n");
@@ -403,7 +519,7 @@
  }
  
  ZEND_API void * __zend_malloc(size_t len)
-@@ -2930,6 +3041,34 @@
+@@ -2930,6 +3093,34 @@
  		return p;
  	}
  	zend_out_of_memory();
@@ -463,7 +579,7 @@
  typedef struct _zend_leak_info {
  	void *addr;
  	size_t size;
-@@ -397,6 +413,12 @@
+@@ -397,6 +413,14 @@
  
  */
  
@@ -472,6 +588,8 @@
 +ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void);
 +ZEND_API zend_bool zend_mm_fallible_check(size_t nmemb, size_t size, size_t offset);
 +ZEND_API zend_bool zend_mm_fallible_failed(void);
++ZEND_API void* ZEND_FASTCALL _femalloc(size_t size ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC);
++ZEND_API void* ZEND_FASTCALL _safe_femalloc(size_t nmemb, size_t size, size_t offset ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC);
 +
  END_EXTERN_C()
  
@@ -860,27 +978,28 @@
  #define ZSTR_ALLOCA_ALLOC(str, _len, use_heap) do { \
  	(str) = (zend_string *)do_alloca(ZEND_MM_ALIGNED_SIZE_EX(_ZSTR_STRUCT_SIZE(_len), 8), (use_heap)); \
  	GC_SET_REFCOUNT(str, 1); \
-@@ -147,6 +150,20 @@
- 	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
- 	zend_string_forget_hash_val(ret);
- 	ZSTR_LEN(ret) = (n * m) + l;
+@@ -143,6 +146,21 @@
+ {
+ 	zend_string *ret = (zend_string *)safe_pemalloc(n, m, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)), persistent);
+ 
++	GC_SET_REFCOUNT(ret, 1);
++	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
++	zend_string_forget_hash_val(ret);
++	ZSTR_LEN(ret) = (n * m) + l;
 +	return ret;
 +}
 +
 +static zend_always_inline zend_string *zend_string_safe_falloc(size_t n, size_t m, size_t l, int persistent)
 +{
-+	zend_string *ret;
-+	if (!persistent && !zend_mm_fallible_check(n, m, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)))) {
++	zend_string *ret = persistent
++		? zend_string_safe_alloc(n, m, l, persistent)
++		: (zend_string *)_safe_femalloc(n, m, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(ret == NULL)) {
 +		return NULL;
 +	}
-+	ret = zend_string_safe_alloc(n, m, l, persistent);
-+	if (!persistent && zend_mm_fallible_failed()) {
-+		efree(ret);
-+		return NULL;
-+	}
- 	return ret;
- }
- 
+ 	GC_SET_REFCOUNT(ret, 1);
+ 	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
+ 	zend_string_forget_hash_val(ret);
 --- a/Zend/zend_strtod.c
 +++ b/Zend/zend_strtod.c
 @@ -600,7 +600,7 @@

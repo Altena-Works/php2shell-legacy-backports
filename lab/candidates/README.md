@@ -1,6 +1,6 @@
 # 未検証の作業候補
 
-7.3.33 の統合候補に、JSON エンコード中の遅延 OOM 中断と、`str_repeat` の大きな単一割当を soft OOM として保留する限定的な失敗可能割当を追加しました。固定済み元アーカイブから JSON/filter を含めてクリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗・JSON・`str_repeat` と、配列・エスケープ文字列・巨大 `str_repeat` の良性 OOM 後の同一ワーカー再利用を確認しました。他の大きな単一割当や再割当、両 CVE の全経路遮断は未確認です。
+7.3.33 の統合候補に、JSON エンコード中の遅延 OOM 中断と、`str_repeat` 用の失敗可能な割当を追加しました。後者は公式修正と同じく、割当器が soft limit 超過を実割当前に判定して `NULL` を返します。固定済み元アーカイブから JSON/filter を含めてクリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗・JSON・`str_repeat` を確認しました。巨大な単一割当と、保持中データとの合計で上限を超える良性ケースでは、要求が中断され、soft OOM の報告後も同じワーカーが次要求を処理しました。結果は `/private/tmp/php-backport-fallible-matrix/`、パッチ SHA-256 は `670c37f88c8c18f0ac78e4d39da7297e7c08710cf14cd2cab02b95e37cdb7042`、`libphp7.so` は `2c36f75be90940b13f33a5964b76692820310d68c924b2bacb0fbf895d6c40c9` です。他の大型割当や再割当、両 CVE の全経路遮断は未確認です。
 
 `patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。結果は `pass` ですが、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
 
@@ -16,7 +16,7 @@
 
 同候補に、公式 8.2.35 の basic/URL リライター早期要求リセットを移植しました。固定済み公式アーカイブから展開した元ソースへ fuzz なしで適用でき、続く遅延 OOM 実験差分も fuzz なしで適用できます。Linux/amd64・Apache/mod_php の増分ビルド、通常セッション・multipart・進捗と無害な `Serializable` 値の維持を確認しました。異常終了後の残存状態を動的に再現した検査ではありません。
 
-`php-7.3.33-delayed-oom.experimental.patch` は、上の 7.3.33 候補へ**続けて適用する実験差分**です。通常の `memory_limit` 超過を保留してVMから配送し、別のhard limitではワーカーを終了させる案、内部巻き戻し状態、multipart解析・診断・デストラクタ・ストリーム出力・`debug_backtrace()` 構築の中断条件を追加しています。前段候補への fuzz なし適用と実験用ソースとの21ファイル差分一致を確認しました。Linux/amd64・Apache/mod_phpでビルドし、通常のセッション・multipart・upload progress、良性のsoft limit超過のfatal表示と同じApacheワーカーの次要求処理を確認しました。10MBの通常フォーム入力で要求起動前に上限へ達した場合も、fatalログと同じワーカーの次要求処理を確認しました。[良性のバックトレース検査](check-backtrace-oom.sh)では正常な引数保持、構築中のsoft OOMとワーカー再利用を確認しました。良性のhard limit超過では、設定した閾値のログとワーカー交代、次要求の成功を確認しました。追加監査で `zend_mm_startup_ex()` の `hard_limit` 初期化漏れを修正し、前段候補への fuzz なし適用、Linux/amd64 の増分ビルド、通常の multipart・進捗・セッションと良性バックトレース OOM 後のワーカー再利用を再確認しました。この別のヒープ生成経路自体の動的実行は未確認です。さらに `ext/standard/var_unserializer.[re,c]` に保留 OOM 時の復号中断を追加し、fuzz なし適用と Linux/amd64 増分ビルド、通常のセッション・進捗・multipart を確認しました。[良性の配列復号検査](check-unserialize-oom.sh)では通常スクリプト内で 8 MiB の soft OOM が報告され、同じ Apache ワーカーが次の要求を処理しました。`filter` 拡張の入力登録・サニタイズにも保留 OOM の中断条件を追加しました。`--enable-filter` を明示した Linux/amd64 ビルドで2ファイルをコンパイルし、Apache/mod_php の通常 GET・multipart・進捗と、無害な10 MiBフォーム入力の8 MiB soft OOM後の同一ワーカー再利用を確認しました。旧版に上流の fallible allocation API はなく、大きな単一割当、upload progress 中の復号 OOM、他の拡張モジュールは未検証です。**2件のCVEの全入口・例外経路、他の設定や保存形式の互換性は未検証です。配布・導入用パッチではありません。**
+`php-7.3.33-delayed-oom.experimental.patch` は、上の 7.3.33 候補へ**続けて適用する旧実験差分**です。現在の統合候補には遅延 OOM、JSON 中断、`str_repeat` 用の失敗可能割当が含まれます。**2件の CVE の全入口・例外経路、他の設定や保存形式の互換性は未検証です。配布・導入用パッチではありません。**
 
 統合した実験用の単一差分は [patches/php-7.3.33.patch](patches/php-7.3.33.patch) です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドを行い、Apache/mod_php の通常セッション・multipart・進捗・`Serializable` 値維持を確認しました。同じビルドで良性の通常 soft OOM と配列復号中の soft OOM が報告され、同じワーカーが次要求を処理しました。**この結果は両 CVE の完全遮断を示さず、`patches/` の配布用差分へ昇格していません。**
 
