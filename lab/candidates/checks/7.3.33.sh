@@ -3,7 +3,11 @@ set -euo pipefail
 
 source_tree=${1:?source tree required}
 version=${2:?version required}
-[[ $version == 7.3.33 ]] || exit 2
+case "$version" in
+    5.6.40) image=localhost/php-backport-build:5.6 ;;
+    7.3.33) image=localhost/php-backport-build:7.4 ;;
+    *) exit 2 ;;
+esac
 script_dir=$(cd "$(dirname "$(realpath "$0")")/../.." && pwd)
 
 "$script_dir/check-multipart-progress.sh" "$source_tree" "$version" PROGRESS_PRESENT
@@ -17,7 +21,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-multipart.php:/var/www/html/normal-multipart.php:ro" \
     -v "$script_dir/candidates/session-fixture.php:/var/www/html/session-fixture.php:ro" \
     -e PHP_MODULE_NAME="$module_name" \
-    localhost/php-backport-build:7.4 bash -lc '
+    "$image" bash -lc '
         set -e
         install -m 644 "/src/libs/$PHP_MODULE_NAME" "/usr/lib/apache2/modules/$PHP_MODULE_NAME"
         printf "%s\n" "php_value session.upload_progress.enabled On" \

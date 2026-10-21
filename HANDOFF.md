@@ -27,15 +27,17 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 
 5.6.40 の[追加候補](lab/candidates/README.md)には post-RSHUTDOWN 後の `last_error` 再消去を入れた。元アーカイブへの fuzz なし適用、隔離 Linux/amd64・Apache/mod_php のクリーンビルド、通常セッション・multipart と進捗停止は通過。最初に試した古いビルド木では進捗が有効だったため、その結果は候補検証に採用せず、新しい作業木でやり直した。後処理診断の動的確認と残る入口の網羅は未実施。
 
+5.6.40 の[機能維持候補](lab/candidates/README.md)は upload progress の早期更新中に専用の不完全クラス復号と `Serializable` の元ペイロード再保存を行う。元ソースへの fuzz なし適用と Linux/amd64・Apache/mod_php のクリーンビルド後、候補内の生成済み C をそのまま再コンパイルし、通常 multipart・進捗記録・セッション値維持を再確認した。ビルド木の変更対象 15 ファイルは候補作成元と一致。両 CVE の遮断と OOM 後の回復は未判定で、配布用パッチには昇格していない。
+
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
 同候補の `main/main.c` に、公式 8.2.35 の終了境界に合わせた post-RSHUTDOWN 後の `last_error` 再消去を追加した。元ソースへの fuzz なし dry-run、Linux/amd64 の増分コンパイル、上記の正常系再実行は通過。後処理診断の動的な経路確認と CVE-2026-109619 全入口の遮断は未実施。
 
 ## 次の作業
 
-1. [設計書の対応表](BACKPORT-DESIGN.md#遅延-oom-の移植境界)に沿い、7.3.33 の既存 VM 割り込みを起点に遅延 OOM の配送境界を実装する。5.6.40 は同じ VM 経路がないため独立設計とする。
-2. 版別に通常の上限到達を安全な位置へ遅延配送し、厳格な上限や実際の割当失敗のみをワーカー終了に送る。CVE-2026-109619 の残存経路と、upload progress を含む正常機能への影響も判定する。
-3. [検証ラボ](lab/README.md)の Linux/amd64・Apache/mod_php で、良性の上限到達後もワーカーが再利用でき、次の通常リクエストが成功することを確認する。攻撃コードや PoC は作成・実行しない。未確認範囲は公開資料に残す。
+1. PHP 5.6.40 と 7.3.33 の独自移植を先に完了する。[設計書の対応表](BACKPORT-DESIGN.md#遅延-oom-の移植境界)に沿い、通常の上限到達を安全な位置へ遅延配送し、厳格な上限や実際の割当失敗のみをワーカー終了に送る。5.6.40 は 7.3.33 と VM 経路が異なるため独立して実装する。
+2. 両版で CVE-2026-109619 の残存経路と upload progress を含む正常機能を判定し、[検証ラボ](lab/README.md)の Linux/amd64・Apache/mod_php で良性の上限到達後のワーカー再利用と次の通常リクエストを確認する。攻撃コードや PoC は作成・実行しない。
+3. 両版の実装と判定が終わってから、他の PHP 5〜7 系列の最終 `x.y.z` を版別に調査・移植・検証する。未確認範囲は公開資料に残す。
 
 別作業の Podman VM `staticwebos-build` が自然に停止した後、`php-backport-lab` を起動して 7.3.33 候補を検証した。別作業のVMとコンテナは変更していない。候補の結果は `/private/tmp/php-backport-candidate-73/results/patch/7.3.33/` に保存した。`pass` は上記の正常系に限り、両 CVE の遮断判定ではない。
 
