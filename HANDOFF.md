@@ -25,6 +25,8 @@
 
 CVE-2026-109619 についても、upload progress 停止は緊急緩和にとどまる。特に 5.6.40 は [版別調査](notes/php-5.6.40.md) に記録した別の状態経路が未検証である。両 CVE は版ごとに独立して判定する。
 
+5.6.40 の[追加候補](lab/candidates/README.md)には post-RSHUTDOWN 後の `last_error` 再消去を入れた。元アーカイブへの fuzz なし適用、隔離 Linux/amd64・Apache/mod_php のクリーンビルド、通常セッション・multipart と進捗停止は通過。最初に試した古いビルド木では進捗が有効だったため、その結果は候補検証に採用せず、新しい作業木でやり直した。後処理診断の動的確認と残る入口の網羅は未実施。
+
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
 同候補の `main/main.c` に、公式 8.2.35 の終了境界に合わせた post-RSHUTDOWN 後の `last_error` 再消去を追加した。元ソースへの fuzz なし dry-run、Linux/amd64 の増分コンパイル、上記の正常系再実行は通過。後処理診断の動的な経路確認と CVE-2026-109619 全入口の遮断は未実施。
