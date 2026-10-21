@@ -42,3 +42,5 @@ upload progress の機能制限は、通常の小さな multipart 投稿で別�
 version=7.3.33
 lab/check-multipart-progress.sh "$results_dir/work/$version/php-$version" "$version" PROGRESS_ABSENT
 ```
+
+通常の `memory_limit` 超過後に同じ Apache ワーカーが次の良性要求を処理できるかは、`lab/check-normal-oom.sh <ビルド済みソース> <版>` で確認します。これはsoft limitの正常系確認であり、hard limitやCVEの悪用不能性を証明しません。
