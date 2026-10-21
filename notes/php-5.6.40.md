@@ -4,6 +4,8 @@
 
 ## CVE-2026-109618
 
+遅延OOMを機能維持で移植する際のVM境界を追加調査した。5.6.40の生成済み`Zend/zend_vm_execute.h`はCALL型で演算ごとに`execute_ex()`のループへ戻るが、`Zend/zend_vm_gen.php`はSWITCH型とGOTO型も生成でき、GOTO型の`ZEND_VM_CONTINUE()`は次のhandlerへ直接分岐する。したがってCALL型ループだけに保留OOM確認を加えても、全ビルドの安全地点を覆えない。`Zend/zend_vm_execute.skl`・生成器・生成済みVMを整合させる必要がある。また`ZEND_HANDLE_EXCEPTION`は`EG(opline_before_exception)`から演算位置を直ちに計算し、catch/finallyへ配送する。7.3の内部巻き戻し状態をそのまま移すことはできず、5.6の`zval *`例外とVMスタック後始末に合わせた独立実装が必要。これはソース調査段階であり、実装・検証結果ではない。
+
 PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から `zend_bailout()` を呼ぶ。Apache/mod_php はリクエスト開始が失敗しても終了処理へ進む。この組み合わせは [PHP 公式の説明](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)にある危険な状態遷移と一致する。
 
 `patches/php-5.6.40.patch`（SHA-256 `538e8b0543607bf15227697b6473938dbf4cfde8a0781ed604e308e8777c9899`）は、[PHP 公式の 7.4 向け最小バックポート](https://github.com/php/php-src/tree/PHP-7.4-CVE-2026-109618-109619)と同じ安全側の方法で、OOM と関連する割当サイズのオーバーフロー時にワーカーを即時終了させる。`zend_strtod.c` の `Balloc()` での割当失敗も含む。通常の割当経路は変更しない。OOM 時に PHP の通常のエラーハンドラやシャットダウン処理が動かなくなる挙動変更がある。最終候補は元ソースからの fuzz なし適用・クリーンビルドを通り、隔離 Linux/amd64・Apache/mod_php で通常セッション HTTP を確認した。制御された OOM 後のワーカー回復は未確認。
