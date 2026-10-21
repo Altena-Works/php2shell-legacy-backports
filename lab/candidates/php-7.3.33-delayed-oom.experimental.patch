@@ -209,7 +209,15 @@
  #endif
  	return SUCCESS;
  }
-@@ -2960,6 +3010,34 @@
+@@ -2894,6 +2944,7 @@
+ #endif
+ #if ZEND_MM_LIMIT
+ 	heap->limit = (Z_L(-1) >> Z_L(1));
++	heap->hard_limit = heap->limit;
+ 	heap->overflow = 0;
+ #endif
+ #if ZEND_MM_CUSTOM
+@@ -2960,6 +3011,34 @@
  	zend_out_of_memory();
  }
  
