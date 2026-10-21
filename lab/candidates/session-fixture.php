@@ -29,4 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         && $_SESSION['fixture'] instanceof BackportSessionFixture
         && $_SESSION['fixture']->value() === 'ordinary'
         ? "PRESERVED\n" : "SESSION_VALUE_FAIL\n";
+    if (isset($_GET['progress'])) {
+        echo isset($_SESSION['upload_progress_check'])
+            ? "PROGRESS_PRESENT\n" : "PROGRESS_ABSENT\n";
+    }
 }
