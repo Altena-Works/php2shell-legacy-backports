@@ -1,0 +1,8 @@
+FROM docker.io/library/php:7.4-apache@sha256:18b3497ee7f2099a90b66c23a0bc3d5261b12bab367263e1b40e9b004c39e882
+
+RUN printf 'deb http://snapshot.debian.org/archive/debian/20221114T000000Z bullseye main\n' > /etc/apt/sources.list \
+    && printf 'deb http://snapshot.debian.org/archive/debian-security/20221114T000000Z bullseye-security main\n' >> /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends \
+        apache2-dev autoconf build-essential libxml2-dev patch pkg-config \
+    && rm -rf /var/lib/apt/lists/*
