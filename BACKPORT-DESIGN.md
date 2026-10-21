@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | 5.6.40 | OOM 対策、限定的な状態リセット、upload progress 停止の緊急候補。fuzz なし適用、クリーンビルド、Apache/mod_php、通常セッションと multipart、進捗停止を確認 | 進捗機能を停止する互換性制限があり、他の状態経路も未検証。未完成 |
 | 7.0.33 / 7.1.33 / 7.2.34 | 公式 7.4 差分の直接適用は多数の hunk 不一致。安全な版固有パッチは未作成 | 未完成 |
-| 7.3.33 | 機能維持候補へ遅延OOM実験差分を重ね、fuzz なし適用、ビルド、Apache/mod_phpの通常セッション・multipart・進捗、`str_repeat`・`str_pad`・`implode`の良性soft OOM後の同一ワーカー再利用と代表的hard limit超過後のワーカー交代を確認 | 別のOOM入口と2件の完全遮断は未検証。未完成 |
+| 7.3.33 | 機能維持候補へ遅延OOM実験差分を重ね、fuzz なし適用、クリーンビルド後の増分ビルド、Apache/mod_phpの通常セッション・multipart・進捗、`str_repeat`・`str_pad`・`implode`・`chunk_split`の良性soft OOM後の同一ワーカー再利用と代表的hard limit超過後のワーカー交代を確認 | 別のOOM入口と2件の完全遮断は未検証。最新差分のクリーンビルドは未実施。未完成 |
 | 5.4.45 / 5.5.38 | 配布ソースは取得済み。版固有の修正・実行検証は未実施 | 未確認 |
 | 5.0.5 / 5.1.6 / 5.2.17 / 5.3.29 | 公式アーカイブを取得・ハッシュ照合。session ソースに upload progress シンボルなし | OOM と他の要求間状態は未判定。実行検証未実施 |
 
@@ -21,7 +21,7 @@ PHP 7.4.33、8.0.30、8.1.34 の公式最小バックポートと、その版専
 
 配布用の独自移植候補は 5.6.40 と 7.3 系の通常の `memory_limit` 超過も `_exit(1)` に送る。これは不完全な状態での終了処理を避ける一方、Apache/mod_php のワーカーを通常の上限到達でも失わせる。7.3.33 の実験差分は遅延 OOM により代表的な上限到達後のワーカー再利用を確認したが、まだ配布用へ昇格していない。PHP 8.2.35 の完全修正は、上限超過を保留し、VM または POST・関数呼び出し・主スクリプトの境界で届け、厳格な上限と実際の割当失敗を別に扱う。
 
-旧版でこの挙動を移植するには、`Zend/zend_alloc.[ch]` の上限・保留状態だけでなく、`Zend/zend_globals.h`、`Zend/zend_vm_def.h` と生成済み VM、`Zend/zend_execute_API.c`、`Zend/zend.c`、`main/SAPI.c`、`main/main.c` の配送と要求間の寿命を一体で設計する。7.3/7.4 の例外処理は `EG(opline_before_exception)` が存在する前提を持ち、5.6 には同じ VM 割り込み機構がない。アロケータの `_exit(1)` だけを `zend_bailout()` に戻す変更や、VM 割り込みだけの追加は採用しない。版別の安全地点、hard limit、良性の上限到達後のワーカー再利用を確認するまで、この改善を完了としない。
+旧版でこの挙動を移植するには、`Zend/zend_alloc.[ch]` の上限・保留状態だけでなく、`Zend/zend_globals.h`、`Zend/zend_vm_def.h` と生成済み VM、`Zend/zend_execute_API.c`、`Zend/zend.c`、`main/SAPI.c`、`main/php_variables.c`、`main/rfc1867.c`、`main/main.c` の配送と要求間の寿命を一体で設計する。5.6 では生成器が CALL/SWITCH/GOTO の各 VM を作り、公式 8.2.35 は POST・入力登録中にも保留 OOM を検査する。実際の割当失敗とサイズオーバーフローは通常の soft limit 到達と分ける。7.3/7.4 の例外処理は `EG(opline_before_exception)` が存在する前提を持ち、5.6 には同じ VM 割り込み機構がない。アロケータの `_exit(1)` だけを `zend_bailout()` に戻す変更や、VM 割り込みだけの追加は採用しない。版別の安全地点、hard limit、良性の上限到達後のワーカー再利用を確認するまで、この改善を完了としない。
 
 8.2.34→8.2.35 の公式ソース差分から、機能を維持する修正の結合点を確認した。これは移植作業の依存関係であり、現行候補に実装済みという意味ではない。
 
@@ -29,7 +29,7 @@ PHP 7.4.33、8.0.30、8.1.34 の公式最小バックポートと、その版専
 
 | 公式修正の境界 | 7.3.33 の対応箇所 | 5.6.40 の対応箇所・相違 |
 | --- | --- | --- |
-| `zend_alloc.[ch]`: soft limit の保留、hard limit、割当失敗の扱い | 配布用候補は両種の OOM を `_exit(1)` に送る。実験候補は遅延 soft OOM と `str_repeat`・`str_pad`・`implode` に限定した失敗可能割当を実装。一般的な fallible API と他の再割当は未移植 | 同名の関数はあるが、古いアロケータと TSRMLS に合わせて別実装が必要 |
+| `zend_alloc.[ch]`: soft limit の保留、hard limit、割当失敗の扱い | 配布用候補は両種の OOM を `_exit(1)` に送る。実験候補は遅延 soft OOM と `str_repeat`・`str_pad`・`implode`・`chunk_split` に限定した失敗可能割当を実装。一般的な fallible API と他の再割当は未移植 | 同名の関数はあるが、古いアロケータと TSRMLS に合わせて別実装が必要 |
 | `zend_globals.h`、`zend_vm_def.h` と生成済み VM: 保留状態と安全地点への配送 | 既存の `EG(vm_interrupt)` を使う余地がある。アロケータ単独では完結しない | 7.3 と同じ VM 割り込み経路はない。安全地点と配送方法を先に定義する必要がある |
 | `zend_execute_API.c`、`Zend/zend.c`、`main/SAPI.c`: 関数呼び出し、主スクリプト、POST の終了境界 | `zend_call_function()`、主スクリプト実行、POST 呼び出し元を版別に追う | zval、例外、関数呼び出しの規約が異なるため直接移植しない |
 | `ext/session/session.c` と `ext/standard/var_unserializer.re`: 進捗更新中だけ不完全クラスで復号し、RINIT 前の状態を初期化・破棄 | 配布用候補は callback を停止。機能維持候補では復号・再符号化、更新開始・終了、`_SESSION` の寿命を一体で扱う | `zval *` と古い unserializer API を使用。機能維持候補では専用復号と multipart 開始時の状態初期化を移植したが、残る状態経路は未判定 |

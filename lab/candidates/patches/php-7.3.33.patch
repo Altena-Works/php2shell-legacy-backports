@@ -3274,7 +3274,40 @@
  	cptr = ZSTR_VAL(str) + ZSTR_LEN(str);
  	*cptr = 0;
  
-@@ -5437,7 +5447,10 @@
+@@ -2331,7 +2341,10 @@
+ 	}
+ 	out_len += srclen + 1;
+ 
+-	dest = zend_string_alloc(out_len * sizeof(char), 0);
++	dest = zend_string_safe_falloc(1, out_len, 0, 0);
++	if (UNEXPECTED(dest == NULL)) {
++		return NULL;
++	}
+ 
+ 	for (p = src, q = ZSTR_VAL(dest); p < (src + srclen - chunklen + 1); ) {
+ 		memcpy(q, p, chunklen);
+@@ -2379,7 +2392,10 @@
+ 
+ 	if ((size_t)chunklen > ZSTR_LEN(str)) {
+ 		/* to maintain BC, we must return original string + ending */
+-		result = zend_string_safe_alloc(ZSTR_LEN(str), 1, endlen, 0);
++		result = zend_string_safe_falloc(ZSTR_LEN(str), 1, endlen, 0);
++		if (UNEXPECTED(result == NULL)) {
++			return;
++		}
+ 		memcpy(ZSTR_VAL(result), ZSTR_VAL(str), ZSTR_LEN(str));
+ 		memcpy(ZSTR_VAL(result) + ZSTR_LEN(str), end, endlen);
+ 		ZSTR_VAL(result)[ZSTR_LEN(result)] = '\0';
+@@ -2394,6 +2410,8 @@
+ 
+ 	if (result) {
+ 		RETURN_STR(result);
++	} else if (ZEND_HAS_OOM()) {
++		return;
+ 	} else {
+ 		RETURN_FALSE;
+ 	}
+@@ -5437,7 +5455,10 @@
  		RETURN_EMPTY_STRING();
  
  	/* Initialize the result string */
@@ -3286,7 +3319,7 @@
  	result_len = ZSTR_LEN(input_str) * mult;
  
  	/* Heavy optimization for situations where input string is 1 byte long */
-@@ -5791,7 +5804,10 @@
+@@ -5791,7 +5812,10 @@
  		return;
  	}
  

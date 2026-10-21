@@ -9,6 +9,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-repeat-limit.php:/var/www/html/normal-repeat-limit.php:ro" \
     -v "$script_dir/normal-pad-limit.php:/var/www/html/normal-pad-limit.php:ro" \
     -v "$script_dir/normal-implode-limit.php:/var/www/html/normal-implode-limit.php:ro" \
+    -v "$script_dir/normal-chunk-limit.php:/var/www/html/normal-chunk-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -45,6 +46,9 @@ normal_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_implode=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-implode-limit.php)
 [[ $normal_implode == IMPLODE_OK ]] || { printf 'normal implode failed: %s\n' "$normal_implode" >&2; exit 1; }
+normal_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-chunk-limit.php)
+[[ $normal_chunk == CHUNK_OK ]] || { printf 'normal chunk_split failed: %s\n' "$normal_chunk" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -102,4 +106,16 @@ after_implode=$(podman exec "$container_id" curl -fsS --max-time 5 \
 [[ ${pre%%$'\n'*} == ${after_implode%%$'\n'*} ]] || {
     printf 'Apache worker changed after implode soft OOM\n' >&2; exit 1;
 }
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED WORKER_REUSED
+
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/chunk-limit.out 'http://127.0.0.1/normal-chunk-limit.php?limit=1' >/dev/null
+chunked=$(podman exec "$container_id" tail -c 500 /tmp/chunk-limit.out)
+after_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $chunked == *'Allowed memory size of 8388608 bytes exhausted'* && $chunked != *RETURNED* ]] || {
+    printf 'expected chunk_split soft OOM and request abort missing: %s\n' "$chunked" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_chunk%%$'\n'*} ]] || {
+    printf 'Apache worker changed after chunk_split soft OOM\n' >&2; exit 1;
+}
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORKER_REUSED

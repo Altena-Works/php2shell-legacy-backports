@@ -9,23 +9,23 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 統合候補に遅延 OOM、JSON 中断、`str_repeat`・`str_pad`・`implode` 用の割当前 soft-limit 判定を実装。Linux/amd64・Apache/mod_php でクリーンビルド、通常のセッション・multipart・進捗・JSON・各文字列関数と、代表的な良性 OOM 後の同一ワーカー再利用を確認 | 他の大型割当・再割当・拡張、upload progress 中の復号 OOM、両 CVE の全経路は未判定 |
+| 7.3.33 | 統合候補に遅延 OOM、JSON 中断、`str_repeat`・`str_pad`・`implode`・`chunk_split` 用の割当前 soft-limit 判定を実装。Linux/amd64・Apache/mod_php でクリーンビルド後、今回の文字列変更を増分ビルドし、通常のセッション・multipart・進捗・JSON・各文字列関数と、代表的な良性 OOM 後の同一ワーカー再利用を確認 | 他の大型割当・再割当・拡張、upload progress 中の復号 OOM、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 統合候補の SHA-256 は `845a90fbfcea6f8e8e0f13c68394d1dbb46d4f9863925a3a33523b06ae63aa0b`。固定済み元アーカイブへ fuzz なしで適用し、`lab/run-matrix.sh` で JSON/filter を含むクリーンビルドと Apache/mod_php の検査を通過した。`libphp7.so` の SHA-256 は `97433a9444f1dd2f5e148989c05dcdacb1b061a2e6f634e5f9ae81cc612ac6f4`。結果は `/private/tmp/php-backport-implode-matrix2/`。
+7.3.33 統合候補の最新差分 SHA-256 は `68c71c626587605372a5b90ff2e76e92cce0e11fd1263218461e1a2427c90062`。固定済み元アーカイブへ fuzz なしで適用し、その `string.c` と増分ビルドしたソースが一致した。元のクリーンビルドは `/private/tmp/php-backport-implode-matrix2/`。今回の増分ビルド後に同じ Apache/mod_php 検査を通過した `libphp7.so` の SHA-256 は `af11c7f9ff603dc5e96eb11be74f6589f8877920ccb923d38e6cf878fb9c1827`。**最新差分全体のクリーンビルドは未実施。**
 
-`str_repeat`・`str_pad`・`implode` の失敗可能割当は、公式修正と同様に `heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理、`implode` の旧引数順とオブジェクト変換、大きな結果の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。独立の読み取りレビューに具体的な追加指摘はなかった。レビューは全経路の保証ではない。
+`str_repeat`・`str_pad`・`implode`・`chunk_split` の失敗可能割当は、`heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理、`chunk_split` の完全・端数チャンク、入力より大きいチャンクと空文字、結果拡張時の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。`wordwrap` の伸長・短縮を含む他経路は未移植。
 
 5.6.40 の機能維持候補は `/private/tmp/php-backport-56-early-candidate-results/` で正常系を確認した。現行の配布用緊急パッチは upload progress 停止による暫定緩和であり、機能維持候補や公式同等修正と混同しない。通常 soft OOM では `curl 52` とワーカー交代を確認しており、5.6.40 を完了扱いにしない。
 
 ## 次の作業
 
-1. 7.3.33 の残る公式修正入口、別の大型割当・再割当・拡張、異常終了後の状態寿命を調査し、良性検査を最小限追加する。特に upload progress 中の復号 OOM と要求間状態を判定する。
-2. 5.6.40 の VM 構造に合わせた遅延 OOM と状態消去を独立して実装し、Linux/amd64・Apache/mod_php で検証する。通常 session と upload progress の機能を維持する。
+1. 7.3.33 の `wordwrap` など残る公式修正入口、別の大型割当・再割当・拡張、異常終了後の状態寿命を調査し、良性検査を最小限追加する。特に upload progress 中の復号 OOM と要求間状態を判定する。
+2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 
 検証VMは作業終了時に `podman machine stop php-backport-lab` で正常停止する。別作業の `staticwebos-build` VMは変更しない。

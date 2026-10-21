@@ -1,6 +1,6 @@
 # 未検証の作業候補
 
-7.3.33 の統合候補に、JSON エンコード中の遅延 OOM 中断と、`str_repeat`・`str_pad`・`implode` 用の失敗可能な割当を追加しました。後者は公式修正と同じく、割当器が soft limit 超過を実割当前に判定して `NULL` を返します。固定済み元アーカイブから JSON/filter を含めてクリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗・JSON と各文字列関数を確認しました。大きな結果が上限を超える良性ケースでは、要求が中断され、soft OOM の報告後も同じワーカーが次要求を処理しました。結果は `/private/tmp/php-backport-implode-matrix2/`、パッチ SHA-256 は `845a90fbfcea6f8e8e0f13c68394d1dbb46d4f9863925a3a33523b06ae63aa0b`、`libphp7.so` は `97433a9444f1dd2f5e148989c05dcdacb1b061a2e6f634e5f9ae81cc612ac6f4` です。他の大型割当や再割当、両 CVE の全経路遮断は未確認です。
+7.3.33 の統合候補には、遅延 OOM 中断と `str_repeat`・`str_pad`・`implode`・`chunk_split` の失敗可能な割当を含めました。割当器は soft limit 超過を実割当前に判定して `NULL` を返します。前版候補のクリーンビルド後、今回変更した `string.c` を増分ビルドし、Apache/mod_php で通常のセッション・multipart・進捗・JSON・各文字列関数と良性 soft OOM 後の同一ワーカー再利用を確認しました。最新差分を元アーカイブへ fuzz なしで適用したソースとビルドした `string.c` は一致します。パッチ SHA-256 は `68c71c626587605372a5b90ff2e76e92cce0e11fd1263218461e1a2427c90062`、増分ビルド後の `libphp7.so` は `af11c7f9ff603dc5e96eb11be74f6589f8877920ccb923d38e6cf878fb9c1827` です。最新差分全体のクリーンビルドと、他の大型割当・再割当・両 CVE の全経路遮断は未確認です。
 
 `patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。結果は `pass` ですが、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
 
@@ -16,7 +16,7 @@
 
 同候補に、公式 8.2.35 の basic/URL リライター早期要求リセットを移植しました。固定済み公式アーカイブから展開した元ソースへ fuzz なしで適用でき、続く遅延 OOM 実験差分も fuzz なしで適用できます。Linux/amd64・Apache/mod_php の増分ビルド、通常セッション・multipart・進捗と無害な `Serializable` 値の維持を確認しました。異常終了後の残存状態を動的に再現した検査ではありません。
 
-`php-7.3.33-delayed-oom.experimental.patch` は統合前の旧実験差分です。現在の統合候補には遅延 OOM、JSON 中断、`str_repeat`・`str_pad`・`implode` 用の失敗可能割当が含まれるため、この旧差分を重ねません。**2件の CVE の全入口・例外経路、他の設定や保存形式の互換性は未検証です。配布・導入用パッチではありません。**
+`php-7.3.33-delayed-oom.experimental.patch` は統合前の旧実験差分です。現在の統合候補には遅延 OOM、JSON 中断、`str_repeat`・`str_pad`・`implode`・`chunk_split` 用の失敗可能割当が含まれるため、この旧差分を重ねません。**2件の CVE の全入口・例外経路、他の設定や保存形式の互換性は未検証です。配布・導入用パッチではありません。**
 
 統合した実験用の単一差分は [patches/php-7.3.33.patch](patches/php-7.3.33.patch) です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドを行い、Apache/mod_php の通常セッション・multipart・進捗・`Serializable` 値維持を確認しました。同じビルドで良性の通常 soft OOM と配列復号中の soft OOM が報告され、同じワーカーが次要求を処理しました。**この結果は両 CVE の完全遮断を示さず、`patches/` の配布用差分へ昇格していません。**
 
