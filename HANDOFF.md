@@ -8,12 +8,14 @@
 
 | 版 | 記録されている到達点 | 残る判定 |
 | --- | --- | --- |
-| 5.6.40 | 緊急候補を作成。隔離した Linux/amd64・Apache/mod_php で通常セッションと multipart、upload progress の停止を確認 | CVE-2026-109619 の別経路、OOM 後のワーカー回復、完全な機能維持は未確認 |
-| 7.3.29 / 7.3.33 / 7.4.33 | 最小バックポートの適用、ビルド、Apache/mod_php の通常セッション・multipart を確認 | upload progress を停止する。両件の完全遮断は未実証 |
-| 8.0.30 / 8.1.34 | 公式最小バックポートを配置。隔離した Linux/amd64・Apache/mod_php で通常セッションと multipart を確認 | upload progress 停止、両件の完全遮断は未実証 |
+| 5.6.40 | 緊急候補を作成。Linux/amd64・Apache/mod_php の通常セッション・multipart、upload progress 停止、修正後 7 ファイルのハッシュ照合を確認 | CVE-2026-109619 の別経路、OOM 後のワーカー回復、完全な機能維持は未確認 |
+| 7.3.29 / 7.3.33 / 7.4.33 | 最小バックポートの適用、ビルド、Apache/mod_php の通常セッション・multipart、upload progress 停止を確認 | 両件の完全遮断は未実証 |
+| 8.0.30 / 8.1.34 | 公式最小バックポートを配置。Linux/amd64・Apache/mod_php の通常セッション・multipart、upload progress 停止を確認 | 両件の完全遮断は未実証 |
 | 5.4.45 / 5.5.38 / 7.0.33 / 7.1.33 / 7.2.34 | 対応パッチは未完成 | 導入対象外 |
 
-上表は既存の [README](README.md) と [設計書](BACKPORT-DESIGN.md) の記録を整理したもの。今回 8.0.30 と 8.1.34 の `lab/run-matrix.sh` による厳密適用・ビルド・Apache/mod_php の通常 HTTP、別の小さな multipart 投稿を確認した。結果は [8.0.30](notes/php-8.0.30.md)・[8.1.34](notes/php-8.1.34.md)に記録した。これらは悪用不能性の証明ではない。5.6.40 の `fail (3)` は既知の未完了判定を示す。
+上表は既存の [README](README.md) と [設計書](BACKPORT-DESIGN.md) の記録を整理したもの。8.0.30 と 8.1.34 の `lab/run-matrix.sh` は厳密適用・ビルド・Apache/mod_php の通常 HTTP を通過し、別の小さな multipart 投稿も通った。結果は [8.0.30](notes/php-8.0.30.md)・[8.1.34](notes/php-8.1.34.md)に記録した。これらは悪用不能性の証明ではない。5.6.40 の `fail (3)` は既知の未完了判定を示す。
+
+[一行の適用スクリプト](apply-patch.sh)は手元の元アーカイブを使ってパッチのある 6 版すべてで成功し、既存出力と不一致ハッシュを拒否した。7.3.29 は隔離 Linux/amd64 コンテナ内でも適用を確認した。[良性 multipart 検査](lab/check-multipart-progress.sh)は 6 版すべてで `MULTIPART_OK / SESSION_OK / PROGRESS_ABSENT` を確認した。5.6.40 は無修正版を同じラボで再ビルドし、同じ検査で `PROGRESS_PRESENT` を確認した。詳細は[版別記録](notes/php-5.6.40.md)。5.6.40 の `checks/5.6.40.sh` は対象 7 ファイルの SHA-256 を確認し、残る経路のため終了コード 3 を維持する。
 
 ## 優先する未解決事項
 

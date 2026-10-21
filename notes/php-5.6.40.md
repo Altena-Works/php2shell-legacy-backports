@@ -8,6 +8,10 @@ PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から 
 
 `patches/php-5.6.40.patch`（SHA-256 `538e8b0543607bf15227697b6473938dbf4cfde8a0781ed604e308e8777c9899`）は、[PHP 公式の 7.4 向け最小バックポート](https://github.com/php/php-src/tree/PHP-7.4-CVE-2026-109618-109619)と同じ安全側の方法で、OOM と関連する割当サイズのオーバーフロー時にワーカーを即時終了させる。`zend_strtod.c` の `Balloc()` での割当失敗も含む。通常の割当経路は変更しない。OOM 時に PHP の通常のエラーハンドラやシャットダウン処理が動かなくなる挙動変更がある。最終候補は元ソースからの fuzz なし適用・クリーンビルドを通り、隔離 Linux/amd64・Apache/mod_php で通常セッション HTTP を確認した。制御された OOM 後のワーカー回復は未確認。
 
+2026-10-22 の追加照合では、元アーカイブのハッシュ確認、fuzz なしの適用、修正後の対象 7 ファイルの SHA-256 照合、既存の静的安全条件、Apache/mod_php の通常動作、良性 multipart 投稿を確認した。`checks/5.6.40.sh` は対象ファイルの一致を確認した後も、別経路が未調査のため終了コード 3 を保つ。これは公式最小バックポートで用いた**検証項目**へ近づけるものであり、同等の防御範囲を立証するものではない。
+
+同じラボ構成で元ソースから無修正版を再ビルドした。無修正版は `baseline pass`、修正候補は既知の未完了判定による `fail (3)` で、どちらも `5.6.40 / apache2handler / SESSION_OK` を返した。良性 multipart 検査は無修正版が `MULTIPART_OK / SESSION_OK / PROGRESS_PRESENT`、修正候補が `MULTIPART_OK / SESSION_OK / PROGRESS_ABSENT`。ビルドした `libphp5.so` の SHA-256 は無修正版 `c3b5a44ec30bb84b085a42453ead4ff356aca41859f42ca0f19079965e1a054e`、修正候補 `40090cd73b758fbdf58ebbb82a6aa0a86fe6e8427ded9f49fa13dd1fb5bb1d58`。
+
 ## CVE-2026-109619
 
 **緊急緩和を追加したが、完全遮断は未検証。** PHP 5.6.40 の upload progress カウンタは独立して確保した `zval *` であり、8.x の HashTable bucket ポインタと同じ実装ではない。また、5.6 の `last_error` の文字列は `strdup` / `free` で管理される。これらの相違だけで安全とは判定できない。リクエストをまたいで残る session、executor、SAPI、拡張状態について、具体的な producer / consumer と正常動作への影響を調べる必要がある。
