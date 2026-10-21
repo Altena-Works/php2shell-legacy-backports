@@ -427,6 +427,18 @@
  static const zend_live_range *find_live_range(const zend_op_array *op_array, uint32_t op_num, uint32_t var_num) /* {{{ */
  {
  	int i;
+--- a/Zend/zend_objects.c
++++ b/Zend/zend_objects.c
+@@ -76,6 +76,9 @@
+ 	zend_function *destructor = object->ce->destructor;
+ 
+ 	if (destructor) {
++		if (ZEND_HAS_OOM()) {
++			return;
++		}
+ 		zend_object *old_exception;
+ 		zend_class_entry *orig_fake_scope;
+ 		zend_fcall_info fci;
 --- a/Zend/zend_vm_def.h
 +++ b/Zend/zend_vm_def.h
 @@ -3539,7 +3539,7 @@
@@ -644,6 +656,26 @@
  		efree(SG(request_info).content_type_dup);
  		SG(request_info).content_type_dup = NULL;
  	}
+--- a/main/main.c
++++ b/main/main.c
+@@ -941,6 +941,9 @@
+ 	char *origin;
+ 	char *message;
+ 	int is_function = 0;
++	if (ZEND_HAS_OOM()) {
++		return;
++	}
+ 
+ 	/* get error text into buffer and escape for html if necessary */
+ 	buffer_len = (int)vspprintf(&buffer, 0, format, args);
+@@ -1864,6 +1867,7 @@
+ 	zend_bool report_memleaks;
+ 
+ 	EG(flags) |= EG_FLAGS_IN_SHUTDOWN;
++	EG(delayed_oom).state = ZEND_OOM_STATE_NONE;
+ 
+ 	report_memleaks = PG(report_memleaks);
+ 
 --- a/main/rfc1867.c
 +++ b/main/rfc1867.c
 @@ -59,7 +59,7 @@
@@ -734,7 +766,22 @@
  }
  
  static char *php_mime_get_hdr_value(zend_llist header, char *key)
-@@ -800,12 +813,18 @@
+@@ -680,7 +693,13 @@
+ 	size_t total_bytes=0, read_bytes=0;
+ 
+ 	while((read_bytes = multipart_buffer_read(self, buf, sizeof(buf), NULL))) {
+-		out = erealloc(out, total_bytes + read_bytes + 1);
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
++		out = safe_erealloc(out, 1, total_bytes, read_bytes + 1);
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
+ 		memcpy(out + total_bytes, buf, read_bytes);
+ 		total_bytes += read_bytes;
+ 	}
+@@ -800,12 +819,18 @@
  	}
  
  	zend_llist_init(&header, sizeof(mime_header_entry), (llist_dtor_func_t) php_free_hdr_entry, 0);
@@ -753,7 +800,7 @@
  			goto fileupload_done;
  		}
  	}
-@@ -818,6 +837,9 @@
+@@ -818,6 +843,9 @@
  		zend_off_t offset;
  
  		zend_llist_clean(&header);
@@ -763,7 +810,7 @@
  
  		if (!multipart_buffer_headers(mbuff, &header)) {
  			goto fileupload_done;
-@@ -839,6 +861,10 @@
+@@ -839,6 +867,10 @@
  			while (*cd && (pair = getword(mbuff->input_encoding, &cd, ';')))
  			{
  				char *key = NULL, *word = pair;
@@ -774,7 +821,7 @@
  
  				while (isspace(*cd)) {
  					++cd;
-@@ -846,6 +872,11 @@
+@@ -846,6 +878,11 @@
  
  				if (strchr(pair, '=')) {
  					key = getword(mbuff->input_encoding, &pair, '=');
@@ -786,7 +833,7 @@
  
  					if (!strcasecmp(key, "name")) {
  						if (param) {
-@@ -874,11 +905,21 @@
+@@ -874,11 +911,21 @@
  							}
  						}
  					}
@@ -808,7 +855,7 @@
  			}
  
  			/* Normal form variable, safe to read all data into memory */
-@@ -886,6 +927,11 @@
+@@ -886,6 +933,11 @@
  				size_t value_len;
  				char *value = multipart_buffer_read_body(mbuff, &value_len);
  				size_t new_val_len; /* Dummy variable */
@@ -820,7 +867,7 @@
  
  				if (!value) {
  					value = estrdup("");
-@@ -903,6 +949,11 @@
+@@ -903,6 +955,11 @@
  				}
  
  				if (++count <= PG(max_input_vars) && sapi_module.input_filter(PARSE_POST, param, &value, value_len, &new_val_len)) {
@@ -832,7 +879,7 @@
  					if (php_rfc1867_callback != NULL) {
  						multipart_event_formdata event_formdata;
  						size_t newlength = new_val_len;
-@@ -917,9 +968,18 @@
+@@ -917,9 +974,18 @@
  							efree(value);
  							continue;
  						}
@@ -852,7 +899,7 @@
  				} else {
  					if (count == PG(max_input_vars) + 1) {
  						php_error_docref(NULL, E_WARNING, "Input variables exceeded " ZEND_LONG_FMT ". To increase the limit change max_input_vars in php.ini.", PG(max_input_vars));
-@@ -934,7 +994,17 @@
+@@ -934,7 +1000,17 @@
  						event_formdata.length = value_len;
  						event_formdata.newlength = NULL;
  						php_rfc1867_callback(MULTIPART_EVENT_FORMDATA, &event_formdata, &event_extra_data);
@@ -871,7 +918,7 @@
  				}
  
  				if (!strcasecmp(param, "MAX_FILE_SIZE")) {
-@@ -1014,6 +1084,11 @@
+@@ -1014,6 +1090,11 @@
  					efree(param);
  					efree(filename);
  					continue;
@@ -883,7 +930,7 @@
  				}
  			}
  
-@@ -1062,6 +1137,10 @@
+@@ -1062,6 +1143,10 @@
  					event_file_data.length = blen;
  					event_file_data.newlength = &blen;
  					if (php_rfc1867_callback(MULTIPART_EVENT_FILE_DATA, &event_file_data, &event_extra_data) == FAILURE) {
@@ -894,7 +941,7 @@
  						cancel_upload = UPLOAD_ERROR_X;
  						continue;
  					}
-@@ -1130,6 +1209,9 @@
+@@ -1130,6 +1215,9 @@
  				if (php_rfc1867_callback(MULTIPART_EVENT_FILE_END, &event_file_end, &event_extra_data) == FAILURE) {
  					cancel_upload = UPLOAD_ERROR_X;
  				}
@@ -904,7 +951,7 @@
  			}
  
  			if (cancel_upload) {
-@@ -1143,6 +1225,11 @@
+@@ -1143,6 +1231,11 @@
  			} else {
  				zend_hash_add_ptr(SG(rfc1867_uploaded_files), temp_filename, temp_filename);
  			}
@@ -916,7 +963,7 @@
  
  			/* is_arr_upload is true when name of file upload field
  			 * ends in [.*]
-@@ -1155,6 +1242,11 @@
+@@ -1155,6 +1248,11 @@
  					efree(array_index);
  				}
  				array_index = estrndup(start_arr + 1, array_len - 2);
@@ -928,7 +975,7 @@
  			}
  
  			/* Add $foo_name */
-@@ -1162,11 +1254,21 @@
+@@ -1162,11 +1260,21 @@
  				llen = (int)strlen(param);
  				lbuf = (char *) safe_erealloc(lbuf, llen, 1, MAX_SIZE_OF_INDEX + 1);
  				llen += MAX_SIZE_OF_INDEX + 1;
@@ -950,7 +997,7 @@
  				snprintf(lbuf, llen, "%s_name[%s]", abuf, array_index);
  			} else {
  				snprintf(lbuf, llen, "%s_name", param);
-@@ -1183,7 +1285,9 @@
+@@ -1183,7 +1291,9 @@
  			}
  
  			if (!is_anonymous) {
@@ -961,7 +1008,7 @@
  			}
  
  			/* Add $foo[name] */
-@@ -1192,7 +1296,9 @@
+@@ -1192,7 +1302,9 @@
  			} else {
  				snprintf(lbuf, llen, "%s[name]", param);
  			}
@@ -972,7 +1019,7 @@
  			efree(filename);
  			s = NULL;
  
-@@ -1214,7 +1320,9 @@
+@@ -1214,7 +1326,9 @@
  				snprintf(lbuf, llen, "%s_type", param);
  			}
  			if (!is_anonymous) {
@@ -983,7 +1030,7 @@
  			}
  
  			/* Add $foo[type] */
-@@ -1223,7 +1331,9 @@
+@@ -1223,7 +1337,9 @@
  			} else {
  				snprintf(lbuf, llen, "%s[type]", param);
  			}
@@ -994,7 +1041,7 @@
  
  			/* Restore Content-Type Header */
  			if (s != NULL) {
-@@ -1237,7 +1347,9 @@
+@@ -1237,7 +1353,9 @@
  				zval zfilename;
  
  				/* Initialize variables */
@@ -1005,7 +1052,7 @@
  
  				/* if param is of form xxx[.*] this will cut it to xxx */
  				if (!is_anonymous) {
-@@ -1246,7 +1358,9 @@
+@@ -1246,7 +1364,9 @@
  					} else {
  						ZVAL_EMPTY_STRING(&zfilename);
  					}
@@ -1016,7 +1063,7 @@
  				}
  
  				/* Add $foo[tmp_name] */
-@@ -1255,13 +1369,17 @@
+@@ -1255,13 +1375,17 @@
  				} else {
  					snprintf(lbuf, llen, "%s[tmp_name]", param);
  				}
@@ -1036,7 +1083,7 @@
  			}
  
  			{
-@@ -1299,7 +1417,9 @@
+@@ -1299,7 +1423,9 @@
  				} else {
  					snprintf(lbuf, llen, "%s[error]", param);
  				}
@@ -1047,7 +1094,7 @@
  
  				/* Add $foo_size */
  				if (is_arr_upload) {
-@@ -1311,7 +1431,9 @@
+@@ -1311,7 +1437,9 @@
  					if (size_overflow) {
  						ZVAL_STRING(&file_size, file_size_buf);
  					}
@@ -1058,7 +1105,7 @@
  				}
  
  				/* Add $foo[size] */
-@@ -1323,9 +1445,18 @@
+@@ -1323,9 +1451,18 @@
  				if (size_overflow) {
  					ZVAL_STRING(&file_size, file_size_buf);
  				}
@@ -1137,3 +1184,35 @@
  
  				if (SUCCESS != add_post_vars(arr, &post_data, 0)) {
  					smart_str_free(&post_data.str);
+--- a/main/streams/streams.c
++++ b/main/streams/streams.c
+@@ -894,6 +894,9 @@
+ 			}
+ 
+ 			if (grow_mode) {
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				/* allow room for a NUL. If this realloc is really a realloc
+ 				 * (ie: second time around), we get an extra byte. In most
+ 				 * cases, with the default chunk size of 8K, we will only
+@@ -1377,6 +1380,9 @@
+ 
+ 		if (p) {
+ 			do {
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				/* output functions return int, so pass in int max */
+ 				if (0 < (b = PHPWRITE(p + bcount, MIN(mapped - bcount, INT_MAX)))) {
+ 					bcount += b;
+@@ -1390,6 +1396,9 @@
+ 	}
+ 
+ 	while ((b = php_stream_read(stream, buf, sizeof(buf))) > 0) {
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
+ 		PHPWRITE(buf, b);
+ 		bcount += b;
+ 	}
