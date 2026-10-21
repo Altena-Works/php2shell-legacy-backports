@@ -35,6 +35,8 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 
 5.6.40 の[機能維持候補](lab/candidates/README.md)は upload progress の早期更新中に専用の不完全クラス復号と `Serializable` の元ペイロード再保存を行う。multipart 開始時にセッション状態を初期化し、保存先の初期化・読取失敗時に進捗更新を止める。旧版のシンボル更新は既存の進捗キーが参照値なら `progress->data` の元 `zval` を解放するため、更新先の `zval` へ進捗側のポインタを付け替えた。元ソースへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド後の増分コンパイル、通常 multipart・進捗記録・`Serializable` 値維持、参照値の結合を確認した。無効な保存先では警告が記録され、通常のアップロードと同じワーカーの後続要求が成功した。`php`・`php_binary`・`php_serialize` の3形式で良性 `Serializable` 値、multipart、進捗記録を確認した。保存形式の異常系や他のデータ型、両 CVE の全経路遮断と OOM 後の回復は未判定で、配布用パッチには昇格していない。
 
+5.6.40 機能維持候補のファイルなし multipart 終了時に未作成の進捗データへ触れる経路を修正した。元ソースへの fuzz なし適用と Linux/amd64 増分ビルドを確認した。修正前は接続断、修正後は同じ良性投稿・既存セッションが成功し、ファイルありの進捗記録も維持した。防御全体の完了判定は変わらない。
+
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
 同候補の `main/main.c` に、公式 8.2.35 の終了境界に合わせた post-RSHUTDOWN 後の `last_error` 再消去を追加した。元ソースへの fuzz なし dry-run、Linux/amd64 の増分コンパイル、上記の正常系再実行は通過。後処理診断の動的な経路確認と CVE-2026-109619 全入口の遮断は未実施。

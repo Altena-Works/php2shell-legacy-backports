@@ -431,14 +431,17 @@
  			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
  			progress->content_length = data->content_length;
  			progress->sname_len  = strlen(PS(session_name));
-@@ -2824,6 +2872,7 @@
- 					Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
- 					php_session_rfc1867_update(progress, 1 TSRMLS_CC);
- 				}
+@@ -2823,3 +2871,5 @@
+-					add_assoc_bool_ex(progress->data, "done", sizeof("done"), 1);
+-					Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
+-					php_session_rfc1867_update(progress, 1 TSRMLS_CC);
++					if (progress->data) {
++						add_assoc_bool_ex(progress->data, "done", sizeof("done"), 1);
++						Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
++						php_session_rfc1867_update(progress, 1 TSRMLS_CC);
++					}
+@@ -2826,0 +2877 @@
 +				zend_delete_global_variable("_SESSION", sizeof("_SESSION")-1 TSRMLS_CC);
- 				php_rshutdown_session_globals(TSRMLS_C);
- 			}
- 
 --- a/ext/session/php_session.h
 +++ b/ext/session/php_session.h
 @@ -172,6 +172,7 @@
