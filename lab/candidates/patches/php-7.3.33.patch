@@ -3019,7 +3019,49 @@
  			}
  		} ZEND_HASH_FOREACH_END();
  	}
-@@ -532,6 +542,9 @@
+@@ -284,6 +294,9 @@
+ 
+ 	/* pre-allocate for string length plus 2 quotes */
+ 	smart_str_alloc(buf, len+2, 0);
++	if (ZEND_HAS_OOM()) {
++		return FAILURE;
++	}
+ 	smart_str_appendc(buf, '"');
+ 
+ 	do {
+@@ -360,6 +373,11 @@
+ 		} else {
+ 			static const uint32_t charmap[4] = {
+ 				0xffffffff, 0x500080c4, 0x10000000, 0x00000000};
++			/* Escaping a byte may append up to six bytes. */
++			if (ZEND_HAS_OOM()) {
++				ZSTR_LEN(buf->s) = checkpoint;
++				return FAILURE;
++			}
+ 
+ 			len--;
+ 			if (EXPECTED(!ZEND_BIT_TEST(charmap, us))) {
+@@ -458,11 +476,19 @@
+ 			}
+ 		}
+ 	} while (len);
++	if (ZEND_HAS_OOM()) {
++		ZSTR_LEN(buf->s) = checkpoint;
++		return FAILURE;
++	}
+ 
+ 	if (EXPECTED(pos)) {
+ 		smart_str_appendl(buf, s, pos);
+ 	}
+ 	smart_str_appendc(buf, '"');
++	if (ZEND_HAS_OOM()) {
++		ZSTR_LEN(buf->s) = checkpoint;
++		return FAILURE;
++	}
+ 
+ 	return SUCCESS;
+ }
+@@ -532,6 +558,9 @@
  
  int php_json_encode_zval(smart_str *buf, zval *val, int options, php_json_encoder *encoder) /* {{{ */
  {

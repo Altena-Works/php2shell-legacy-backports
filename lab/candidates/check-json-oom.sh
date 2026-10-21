@@ -18,7 +18,12 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
             > /etc/apache2/conf-enabled/one-worker.conf
         exec apache2-foreground
     ')
-trap 'podman stop --time 2 "$container_id" >/dev/null 2>&1 || true' EXIT
+cleanup() {
+    result=$?
+    podman stop --time 2 "$container_id" >/dev/null 2>&1 || true
+    exit "$result"
+}
+trap cleanup EXIT
 
 pre=
 for _ in $(seq 1 30); do
@@ -34,15 +39,18 @@ normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-json-limit.php)
 [[ $normal == JSON_OK ]] || { printf 'normal JSON failed: %s\n' "$normal" >&2; exit 1; }
 
-podman exec "$container_id" curl -sS --max-time 20 \
-    -o /tmp/json-limit.out 'http://127.0.0.1/normal-json-limit.php?limit=1' >/dev/null
-limited=$(podman exec "$container_id" tail -c 500 /tmp/json-limit.out)
-post=$(podman exec "$container_id" curl -fsS --max-time 5 \
-    http://127.0.0.1/normal-worker.php)
-[[ $limited == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
-    printf 'expected soft OOM missing: %s\n' "$limited" >&2; exit 1;
-}
-[[ ${pre%%$'\n'*} == ${post%%$'\n'*} ]] || {
-    printf 'Apache worker changed after soft OOM\n' >&2; exit 1;
-}
-printf '%s\n' JSON_NORMAL_OK JSON_OOM_REPORTED WORKER_REUSED
+for mode in limit escape; do
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/json-limit.out "http://127.0.0.1/normal-json-limit.php?$mode=1" >/dev/null
+    limited=$(podman exec "$container_id" tail -c 500 /tmp/json-limit.out)
+    post=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $limited == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
+        printf 'expected %s soft OOM missing: %s\n' "$mode" "$limited" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${post%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s soft OOM\n' "$mode" >&2; exit 1;
+    }
+    printf '%s\n' "JSON_${mode}_OOM_REPORTED" WORKER_REUSED
+done
+printf '%s\n' JSON_NORMAL_OK
