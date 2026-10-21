@@ -1,0 +1,2970 @@
+--- a/Zend/zend.c
++++ b/Zend/zend.c
+@@ -1112,6 +1112,7 @@
+ 	} zend_end_try();
+ 
+ 	zend_destroy_rsrc_list(&EG(regular_list));
++	zend_mm_oom_info_dtor(&EG(delayed_oom));
+ 
+ #if GC_BENCH
+ 	fprintf(stderr, "GC Statistics\n");
+@@ -1188,7 +1189,7 @@
+ 	zend_class_entry *orig_fake_scope;
+ 
+ 	/* Report about uncaught exception in case of fatal errors */
+-	if (EG(exception)) {
++	if (EG(exception) && EG(delayed_oom).state != ZEND_OOM_STATE_HANDLING) {
+ 		zend_execute_data *ex;
+ 		const zend_op *opline;
+ 
+@@ -1522,6 +1523,9 @@
+ ZEND_API void zend_try_exception_handler() /* {{{ */
+ {
+ 	if (EG(exception)) {
++		if (zend_is_unwind_exit(EG(exception))) {
++			return;
++		}
+ 		if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
+ 			zval orig_user_exception_handler;
+ 			zval params[1], retval2;
+@@ -1566,6 +1570,9 @@
+ 		zend_destroy_file_handle(file_handle);
+ 		if (op_array) {
+ 			zend_execute(op_array, retval);
++			if (ZEND_HAS_OOM()) {
++				zend_handle_delayed_oom();
++			}
+ 			zend_exception_restore();
+ 			zend_try_exception_handler();
+ 			if (EG(exception)) {
+@@ -1573,6 +1580,10 @@
+ 			}
+ 			destroy_op_array(op_array);
+ 			efree_size(op_array, sizeof(zend_op_array));
++			if (ZEND_HAS_OOM()) {
++				va_end(files);
++				return FAILURE;
++			}
+ 		} else if (type==ZEND_REQUIRE) {
+ 			va_end(files);
+ 			return FAILURE;
+--- a/Zend/zend_API.h
++++ b/Zend/zend_API.h
+@@ -376,6 +376,7 @@
+ 
+ #define array_init(arg)				ZVAL_ARR((arg), zend_new_array(0))
+ #define array_init_size(arg, size)	ZVAL_ARR((arg), zend_new_array(size))
++#define array_init_singleton(arg)	ZVAL_ARR((arg), zend_new_array_singleton())
+ ZEND_API int object_init(zval *arg);
+ ZEND_API int object_init_ex(zval *arg, zend_class_entry *ce);
+ ZEND_API int object_and_properties_init(zval *arg, zend_class_entry *ce, HashTable *properties);
+--- a/Zend/zend_alloc.c
++++ b/Zend/zend_alloc.c
+@@ -57,6 +57,8 @@
+ #include "zend_operators.h"
+ #include "zend_multiply.h"
+ #include "zend_bitset.h"
++#include "zend_execute.h"
++#include "zend_exceptions.h"
+ 
+ #ifdef HAVE_SIGNAL_H
+ # include <signal.h>
+@@ -245,6 +247,7 @@
+ #endif
+ #if ZEND_MM_LIMIT
+ 	size_t             limit;                   /* memory limit */
++	size_t             hard_limit;              /* fatal allocation ceiling */
+ 	int                overflow;                /* memory overflow flag */
+ #endif
+ 
+@@ -358,9 +361,44 @@
+ #if ZEND_DEBUG && defined(HAVE_KILL) && defined(HAVE_GETPID)
+ 	kill(getpid(), SIGSEGV);
+ #endif
+-	exit(1);
++	_exit(1);
+ }
+ 
++ZEND_API ZEND_COLD ZEND_NORETURN void zend_mm_safe_error_ex(const char *format, ...)
++{
++	zend_string *script_filename = NULL;
++	uint32_t script_lineno = 0;
++
++	if (zend_is_executing()) {
++		script_filename = zend_get_executed_filename_ex();
++		script_lineno = zend_get_executed_lineno();
++	} else if (zend_is_compiling()) {
++		script_filename = zend_get_compiled_filename();
++		script_lineno = zend_get_compiled_lineno();
++	}
++
++	va_list args;
++	va_start(args, format);
++
++	char buf[1024];
++	vsnprintf(buf, sizeof(buf), format, args);
++
++	va_end(args);
++
++	fprintf(stderr,
++			"\nFatal error: %s in %s on line %d\n",
++			buf,
++			script_filename ? ZSTR_VAL(script_filename) : "Unknown",
++			script_lineno);
++
++	/* See http://support.microsoft.com/kb/190351 */
++# ifdef ZEND_WIN32
++	fflush(stderr);
++# endif
++
++	_exit(1);
++}
++
+ static ZEND_COLD ZEND_NORETURN void zend_mm_safe_error(zend_mm_heap *heap,
+ 	const char *format,
+ 	size_t limit,
+@@ -370,24 +408,78 @@
+ #endif
+ 	size_t size)
+ {
++	(void) heap;
+ 
+-	heap->overflow = 1;
+-	zend_try {
+-		zend_error_noreturn(E_ERROR,
+-			format,
+-			limit,
++	zend_mm_safe_error_ex(format, limit,
+ #if ZEND_DEBUG
+-			filename,
+-			lineno,
++		filename,
++		lineno,
+ #endif
+-			size);
+-	} zend_catch {
+-	}  zend_end_try();
+-	heap->overflow = 0;
+-	zend_bailout();
+-	exit(1);
++		size);
+ }
+ 
++ZEND_API void zend_mm_oom_info_dtor(zend_oom_info *info)
++{
++	if (info->message) {
++		zend_string_release(info->message);
++		info->message = NULL;
++	}
++	if (info->filename) {
++		zend_string_release(info->filename);
++		info->filename = NULL;
++	}
++}
++
++static ZEND_COLD void zend_mm_delayed_error(const char *format, ...)
++{
++	zend_oom_info *info = &EG(delayed_oom);
++	zend_string *filename = NULL;
++	char buf[1024];
++	va_list args;
++
++	if (info->state != ZEND_OOM_STATE_NONE) {
++		return;
++	}
++	if (zend_is_executing()) {
++		filename = zend_get_executed_filename_ex();
++		info->lineno = zend_get_executed_lineno();
++	} else if (zend_is_compiling()) {
++		filename = zend_get_compiled_filename();
++		info->lineno = zend_get_compiled_lineno();
++	}
++	va_start(args, format);
++	vsnprintf(buf, sizeof(buf), format, args);
++	va_end(args);
++	info->message = zend_string_init(buf, strlen(buf), 1);
++	info->filename = filename ? zend_string_copy(filename) : NULL;
++	info->state = ZEND_OOM_STATE_PENDING;
++	EG(vm_interrupt) = 1;
++}
++
++#if ZEND_MM_LIMIT
++static zend_always_inline void zend_mm_check_soft_hard_limit(
++		zend_mm_heap *heap, size_t add_size, size_t requested_size ZEND_FILE_LINE_DC)
++{
++	if (UNEXPECTED(heap->hard_limit < heap->real_size ||
++		add_size > heap->hard_limit - heap->real_size)) {
++		zend_mm_safe_error_ex("Hard memory limit of %zu bytes exhausted (tried to allocate %zu bytes)",
++			heap->hard_limit, requested_size);
++	}
++	if (UNEXPECTED(heap->limit < heap->real_size ||
++		add_size > heap->limit - heap->real_size)) {
++		if (!heap->overflow) {
++#if ZEND_DEBUG
++			zend_mm_delayed_error("Allowed memory size of %zu bytes exhausted at %s:%d (tried to allocate %zu bytes)",
++				heap->limit, __zend_filename, __zend_lineno, requested_size);
++#else
++			zend_mm_delayed_error("Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)",
++				heap->limit, requested_size);
++#endif
++		}
++	}
++}
++#endif
++
+ #ifdef _WIN32
+ void
+ stderr_last_error(char *msg)
+@@ -982,18 +1074,12 @@
+ 				heap->cached_chunks = chunk->next;
+ 			} else {
+ #if ZEND_MM_LIMIT
+-				if (UNEXPECTED(ZEND_MM_CHUNK_SIZE > heap->limit - heap->real_size)) {
++				if (UNEXPECTED(heap->limit < heap->real_size || ZEND_MM_CHUNK_SIZE > heap->limit - heap->real_size)) {
+ 					if (zend_mm_gc(heap)) {
+ 						goto get_chunk;
+-					} else if (heap->overflow == 0) {
+-#if ZEND_DEBUG
+-						zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted at %s:%d (tried to allocate %zu bytes)", heap->limit, __zend_filename, __zend_lineno, size);
+-#else
+-						zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)", heap->limit, ZEND_MM_PAGE_SIZE * pages_count);
+-#endif
+-						return NULL;
+ 					}
+ 				}
++				zend_mm_check_soft_hard_limit(heap, ZEND_MM_CHUNK_SIZE, ZEND_MM_PAGE_SIZE * pages_count ZEND_FILE_LINE_RELAY_CC);
+ #endif
+ 				chunk = (zend_mm_chunk*)zend_mm_chunk_alloc(heap, ZEND_MM_CHUNK_SIZE, ZEND_MM_CHUNK_SIZE);
+ 				if (UNEXPECTED(chunk == NULL)) {
+@@ -1352,7 +1438,7 @@
+ 	size = MAX(size, 1);
+ 	size = ZEND_MM_ALIGNED_SIZE(size) + ZEND_MM_ALIGNED_SIZE(sizeof(zend_mm_debug_info));
+ 	if (UNEXPECTED(size < real_size)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%zu + %zu)", ZEND_MM_ALIGNED_SIZE(real_size), ZEND_MM_ALIGNED_SIZE(sizeof(zend_mm_debug_info)));
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%zu + %zu)", ZEND_MM_ALIGNED_SIZE(real_size), ZEND_MM_ALIGNED_SIZE(sizeof(zend_mm_debug_info)));
+ 		return NULL;
+ 	}
+ #endif
+@@ -1510,18 +1596,10 @@
+ 			}
+ 		} else /* if (new_size > old_size) */ {
+ #if ZEND_MM_LIMIT
+-			if (UNEXPECTED(new_size - old_size > heap->limit - heap->real_size)) {
+-				if (zend_mm_gc(heap) && new_size - old_size <= heap->limit - heap->real_size) {
+-					/* pass */
+-				} else if (heap->overflow == 0) {
+-#if ZEND_DEBUG
+-					zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted at %s:%d (tried to allocate %zu bytes)", heap->limit, __zend_filename, __zend_lineno, size);
+-#else
+-					zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)", heap->limit, size);
+-#endif
+-					return NULL;
+-				}
++			if (UNEXPECTED(heap->limit < heap->real_size || new_size - old_size > heap->limit - heap->real_size)) {
++				zend_mm_gc(heap);
+ 			}
++			zend_mm_check_soft_hard_limit(heap, new_size - old_size, size ZEND_FILE_LINE_RELAY_CC);
+ #endif
+ 			/* try to map tail right after this block */
+ 			if (zend_mm_chunk_extend(heap, ptr, old_size, new_size)) {
+@@ -1800,22 +1878,14 @@
+ 	void *ptr;
+ 
+ 	if (UNEXPECTED(new_size < size)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%zu + %zu)", size, alignment);
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%zu + %zu)", size, alignment);
+ 	}
+ 
+ #if ZEND_MM_LIMIT
+-	if (UNEXPECTED(new_size > heap->limit - heap->real_size)) {
+-		if (zend_mm_gc(heap) && new_size <= heap->limit - heap->real_size) {
+-			/* pass */
+-		} else if (heap->overflow == 0) {
+-#if ZEND_DEBUG
+-			zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted at %s:%d (tried to allocate %zu bytes)", heap->limit, __zend_filename, __zend_lineno, size);
+-#else
+-			zend_mm_safe_error(heap, "Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)", heap->limit, size);
+-#endif
+-			return NULL;
+-		}
++	if (UNEXPECTED(heap->limit < heap->real_size || new_size > heap->limit - heap->real_size)) {
++		zend_mm_gc(heap);
+ 	}
++	zend_mm_check_soft_hard_limit(heap, new_size, size ZEND_FILE_LINE_RELAY_CC);
+ #endif
+ 	ptr = zend_mm_chunk_alloc(heap, new_size, ZEND_MM_CHUNK_SIZE);
+ 	if (UNEXPECTED(ptr == NULL)) {
+@@ -1919,6 +1989,7 @@
+ #endif
+ #if ZEND_MM_LIMIT
+ 	heap->limit = ((size_t)Z_L(-1) >> (size_t)Z_L(1));
++	heap->hard_limit = heap->limit;
+ 	heap->overflow = 0;
+ #endif
+ #if ZEND_MM_CUSTOM
+@@ -2596,7 +2667,7 @@
+ 
+ 	length = strlen(s);
+ 	if (UNEXPECTED(length + 1 == 0)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (1 * %zu + 1)", length);
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (1 * %zu + 1)", length);
+ 	}
+ 	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ 	memcpy(p, s, length+1);
+@@ -2608,7 +2679,7 @@
+ 	char *p;
+ 
+ 	if (UNEXPECTED(length + 1 == 0)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (1 * %zu + 1)", length);
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (1 * %zu + 1)", length);
+ 	}
+ 	p = (char *) _emalloc(length + 1 ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
+ 	memcpy(p, s, length);
+@@ -2622,7 +2693,7 @@
+ 	char *p;
+ 
+ 	if (UNEXPECTED(length + 1 == 0)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (1 * %zu + 1)", length);
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (1 * %zu + 1)", length);
+ 	}
+ 	p = (char *) malloc(length + 1);
+ 	if (UNEXPECTED(p == NULL)) {
+@@ -2639,7 +2710,14 @@
+ ZEND_API int zend_set_memory_limit(size_t memory_limit)
+ {
+ #if ZEND_MM_LIMIT
+-	AG(mm_heap)->limit = (memory_limit >= ZEND_MM_CHUNK_SIZE) ? memory_limit : ZEND_MM_CHUNK_SIZE;
++	zend_mm_heap *heap = AG(mm_heap);
++	size_t limit = (memory_limit >= ZEND_MM_CHUNK_SIZE) ? memory_limit : ZEND_MM_CHUNK_SIZE;
++	size_t reserve = limit > (size_t)1024 * 1024 * 1024 ? (size_t)1024 * 1024 * 1024 : limit;
++	heap->limit = limit;
++	heap->hard_limit = reserve > SIZE_MAX - limit ? SIZE_MAX : limit + reserve;
++	if (heap->hard_limit < heap->real_size) {
++		heap->hard_limit = heap->real_size;
++	}
+ #endif
+ 	return SUCCESS;
+ }
+@@ -2866,6 +2944,7 @@
+ #endif
+ #if ZEND_MM_LIMIT
+ 	heap->limit = (Z_L(-1) >> Z_L(1));
++	heap->hard_limit = heap->limit;
+ 	heap->overflow = 0;
+ #endif
+ #if ZEND_MM_CUSTOM
+@@ -2901,7 +2980,7 @@
+ static ZEND_COLD ZEND_NORETURN void zend_out_of_memory(void)
+ {
+ 	fprintf(stderr, "Out of memory\n");
+-	exit(1);
++	_exit(1);
+ }
+ 
+ ZEND_API void * __zend_malloc(size_t len)
+@@ -2932,6 +3011,34 @@
+ 	zend_out_of_memory();
+ }
+ 
++ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void)
++{
++	zend_oom_info *info = &EG(delayed_oom);
++	zend_execute_data *execute_data = EG(current_execute_data);
++
++	if (info->state != ZEND_OOM_STATE_PENDING) {
++		return;
++	}
++	info->state = ZEND_OOM_STATE_HANDLING;
++	AG(mm_heap)->overflow = 1;
++	if (execute_data) {
++		EG(exception) = NULL;
++		zend_throw_unwind_exit();
++	}
++	zend_try {
++		zend_error(E_ERROR, "%s", ZSTR_VAL(info->message));
++	} zend_catch {
++	} zend_end_try();
++	AG(mm_heap)->overflow = 0;
++	EG(current_execute_data) = execute_data;
++	EG(opline_before_exception) = NULL;
++	zend_mm_oom_info_dtor(info);
++	info->state = ZEND_OOM_STATE_HANDLED;
++	if (!execute_data) {
++		zend_bailout();
++	}
++}
++
+ /*
+  * Local variables:
+  * tab-width: 4
+--- a/Zend/zend_alloc.h
++++ b/Zend/zend_alloc.h
+@@ -42,7 +42,23 @@
+ 
+ #define ZEND_MM_ALIGNED_SIZE_EX(size, alignment) \
+ 	(((size) + ((alignment) - Z_L(1))) & ~((alignment) - Z_L(1)))
++
++typedef enum _zend_oom_state {
++	ZEND_OOM_STATE_NONE = 0,
++	ZEND_OOM_STATE_PENDING,
++	ZEND_OOM_STATE_HANDLING,
++	ZEND_OOM_STATE_HANDLED
++} zend_oom_state;
++
++typedef struct _zend_oom_info {
++	zend_oom_state state;
++	uint32_t lineno;
++	zend_string *message;
++	zend_string *filename;
++} zend_oom_info;
+ 
++#define ZEND_HAS_OOM() (UNEXPECTED(EG(delayed_oom).state != ZEND_OOM_STATE_NONE))
++
+ typedef struct _zend_leak_info {
+ 	void *addr;
+ 	size_t size;
+@@ -397,6 +413,10 @@
+ 
+ */
+ 
++ZEND_API ZEND_COLD ZEND_NORETURN void zend_mm_safe_error_ex(const char *format, ...);
++ZEND_API void zend_mm_oom_info_dtor(zend_oom_info *info);
++ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void);
++
+ END_EXTERN_C()
+ 
+ #endif
+--- a/Zend/zend_builtin_functions.c
++++ b/Zend/zend_builtin_functions.c
+@@ -2159,7 +2159,7 @@
+ }
+ /* }}} */
+ 
+-static void debug_backtrace_get_args(zend_execute_data *call, zval *arg_array) /* {{{ */
++static zend_bool debug_backtrace_get_args(zend_execute_data *call, zval *arg_array) /* {{{ */
+ {
+ 	uint32_t num_args = ZEND_CALL_NUM_ARGS(call);
+ 
+@@ -2168,7 +2168,13 @@
+ 		zval *p = ZEND_CALL_ARG(call, 1);
+ 
+ 		array_init_size(arg_array, num_args);
++		if (ZEND_HAS_OOM()) {
++			goto oom;
++		}
+ 		zend_hash_real_init_packed(Z_ARRVAL_P(arg_array));
++		if (ZEND_HAS_OOM()) {
++			goto oom;
++		}
+ 		ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(arg_array)) {
+ 			if (call->func->type == ZEND_USER_FUNCTION) {
+ 				uint32_t first_extra_arg = MIN(num_args, call->func->op_array.num_args);
+@@ -2181,7 +2187,7 @@
+ 					zend_string *arg_name;
+ 					zval *arg;
+ 
+-					while (i < first_extra_arg) {
++					while (i < first_extra_arg && !ZEND_HAS_OOM()) {
+ 						arg_name = call->func->op_array.vars[i];
+ 						arg = zend_hash_find_ex_ind(call->symbol_table, arg_name, 1);
+ 						if (arg) {
+@@ -2195,7 +2201,7 @@
+ 						i++;
+ 					}
+ 				} else {
+-					while (i < first_extra_arg) {
++					while (i < first_extra_arg && !ZEND_HAS_OOM()) {
+ 						if (EXPECTED(Z_TYPE_INFO_P(p) != IS_UNDEF)) {
+ 							if (Z_OPT_REFCOUNTED_P(p)) {
+ 								Z_ADDREF_P(p);
+@@ -2211,7 +2217,7 @@
+ 				p = ZEND_CALL_VAR_NUM(call, call->func->op_array.last_var + call->func->op_array.T);
+ 			}
+ 
+-			while (i < num_args) {
++			while (i < num_args && !ZEND_HAS_OOM()) {
+ 				if (EXPECTED(Z_TYPE_INFO_P(p) != IS_UNDEF)) {
+ 					if (Z_OPT_REFCOUNTED_P(p)) {
+ 						Z_ADDREF_P(p);
+@@ -2224,10 +2230,19 @@
+ 				i++;
+ 			}
+ 		} ZEND_HASH_FILL_END();
+-		Z_ARRVAL_P(arg_array)->nNumOfElements = num_args;
++		Z_ARRVAL_P(arg_array)->nNumOfElements = i;
+ 	} else {
+ 		ZVAL_EMPTY_ARRAY(arg_array);
+ 	}
++	if (ZEND_HAS_OOM()) {
++		goto oom;
++	}
++	return 1;
++
++oom:
++	zval_ptr_dtor(arg_array);
++	ZVAL_EMPTY_ARRAY(arg_array);
++	return 0;
+ }
+ /* }}} */
+ 
+@@ -2353,7 +2368,13 @@
+ 			}
+ 			if (func->type != ZEND_EVAL_CODE) {
+ 				if ((options & DEBUG_BACKTRACE_IGNORE_ARGS) == 0) {
+-					debug_backtrace_get_args(call, &arg_array);
++					if (!debug_backtrace_get_args(call, &arg_array)) {
++						if (class_name && object && !func->common.scope
++							&& object->handlers->get_class_name != zend_std_get_class_name) {
++							zend_string_release_ex(class_name, 0);
++						}
++						return;
++					}
+ 				}
+ 			}
+ 		} else {
+@@ -2593,7 +2614,10 @@
+ 			if ((options & DEBUG_BACKTRACE_IGNORE_ARGS) == 0 &&
+ 				func->type != ZEND_EVAL_CODE) {
+ 
+-				debug_backtrace_get_args(call, &tmp);
++				if (!debug_backtrace_get_args(call, &tmp)) {
++					zend_array_destroy(Z_ARRVAL(stack_frame));
++					return;
++				}
+ 				zend_hash_add_new(Z_ARRVAL(stack_frame), ZSTR_KNOWN(ZEND_STR_ARGS), &tmp);
+ 			}
+ 		} else {
+@@ -2649,7 +2673,14 @@
+ 			zend_hash_add_new(Z_ARRVAL(stack_frame), ZSTR_KNOWN(ZEND_STR_FUNCTION), &tmp);
+ 		}
+ 
++		if (ZEND_HAS_OOM()) {
++			zend_array_destroy(Z_ARRVAL(stack_frame));
++			return;
++		}
+ 		zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &stack_frame);
++		if (ZEND_HAS_OOM()) {
++			return;
++		}
+ 
+ 		include_filename = filename;
+ 
+--- a/Zend/zend_exceptions.c
++++ b/Zend/zend_exceptions.c
+@@ -43,6 +43,9 @@
+ 
+ static zend_object_handlers default_exception_handlers;
+ 
++/* Internal marker for a fatal error delivered at a safe VM boundary. */
++static zend_class_entry zend_ce_unwind_exit;
++
+ /* {{{ zend_implement_throwable */
+ static int zend_implement_throwable(zend_class_entry *interface, zend_class_entry *class_type)
+ {
+@@ -79,6 +82,10 @@
+ 	if (!exception || !add_previous) {
+ 		return;
+ 	}
++	if (zend_is_unwind_exit(exception) || zend_is_unwind_exit(add_previous)) {
++		OBJ_RELEASE(add_previous);
++		return;
++	}
+ 
+ 	if (exception == add_previous) {
+ 		OBJ_RELEASE(add_previous);
+@@ -152,6 +159,10 @@
+ 
+ 	if (exception != NULL) {
+ 		zend_object *previous = EG(exception);
++		if (previous && zend_is_unwind_exit(previous)) {
++			OBJ_RELEASE(Z_OBJ_P(exception));
++			return;
++		}
+ 		zend_exception_set_previous(Z_OBJ_P(exception), EG(exception));
+ 		EG(exception) = Z_OBJ_P(exception);
+ 		if (previous) {
+@@ -823,6 +834,7 @@
+ void zend_register_default_exception(void) /* {{{ */
+ {
+ 	zend_class_entry ce;
++	INIT_CLASS_ENTRY(zend_ce_unwind_exit, "UnwindExit", NULL);
+ 
+ 	REGISTER_MAGIC_INTERFACE(throwable, Throwable);
+ 
+@@ -886,6 +898,19 @@
+ }
+ /* }}} */
+ 
++ZEND_API ZEND_COLD void zend_throw_unwind_exit(void)
++{
++	ZEND_ASSERT(!EG(exception) && EG(current_execute_data));
++	EG(exception) = zend_objects_new(&zend_ce_unwind_exit);
++	EG(opline_before_exception) = EG(current_execute_data)->opline;
++	EG(current_execute_data)->opline = EG(exception_op);
++}
++
++ZEND_API zend_bool zend_is_unwind_exit(const zend_object *ex)
++{
++	return ex && ex->ce == &zend_ce_unwind_exit;
++}
++
+ /* {{{ Deprecated - Use zend_ce_exception directly instead */
+ ZEND_API zend_class_entry *zend_exception_get_default(void)
+ {
+@@ -1038,6 +1063,8 @@
+ 
+ 		zend_string_release_ex(str, 0);
+ 		zend_string_release_ex(file, 0);
++	} else if (ce_exception == &zend_ce_unwind_exit) {
++		/* The fatal error was already reported before unwinding. */
+ 	} else {
+ 		zend_error(severity, "Uncaught exception '%s'", ZSTR_VAL(ce_exception->name));
+ 	}
+--- a/Zend/zend_exceptions.h
++++ b/Zend/zend_exceptions.h
+@@ -58,6 +58,8 @@
+ ZEND_API ZEND_COLD zend_object *zend_throw_exception(zend_class_entry *exception_ce, const char *message, zend_long code);
+ ZEND_API ZEND_COLD zend_object *zend_throw_exception_ex(zend_class_entry *exception_ce, zend_long code, const char *format, ...) ZEND_ATTRIBUTE_FORMAT(printf, 3, 4);
+ ZEND_API ZEND_COLD void zend_throw_exception_object(zval *exception);
++ZEND_API ZEND_COLD void zend_throw_unwind_exit(void);
++ZEND_API zend_bool zend_is_unwind_exit(const zend_object *ex);
+ ZEND_API void zend_clear_exception(void);
+ 
+ ZEND_API zend_object *zend_throw_error_exception(zend_class_entry *exception_ce, const char *message, zend_long code, int severity);
+--- a/Zend/zend_execute.c
++++ b/Zend/zend_execute.c
+@@ -2836,6 +2836,17 @@
+ }
+ /* }}} */
+ 
++/* A VM interrupt can be delivered between opcodes, without a call opcode to inspect. */
++static void free_unfinished_calls(zend_execute_data *execute_data)
++{
++	zend_execute_data *call = EX(call);
++	while (call) {
++		EX(call) = call->prev_execute_data;
++		zend_vm_stack_free_call_frame(call);
++		call = EX(call);
++	}
++}
++
+ static const zend_live_range *find_live_range(const zend_op_array *op_array, uint32_t op_num, uint32_t var_num) /* {{{ */
+ {
+ 	int i;
+--- a/Zend/zend_execute_API.c
++++ b/Zend/zend_execute_API.c
+@@ -165,6 +165,7 @@
+ 
+ 	EG(full_tables_cleanup) = 0;
+ 	EG(vm_interrupt) = 0;
++	memset(&EG(delayed_oom), 0, sizeof(EG(delayed_oom)));
+ 	EG(timed_out) = 0;
+ 
+ 	EG(exception) = NULL;
+@@ -285,6 +286,8 @@
+ 		zend_hash_discard(EG(function_table), EG(persistent_functions_count));
+ 		zend_hash_discard(EG(class_table), EG(persistent_classes_count));
+ 		zend_cleanup_internal_classes();
++		EG(objects_store).object_buckets = NULL;
++		EG(objects_store).top = 1;
+ 	} else {
+ 		zend_hash_graceful_reverse_destroy(&EG(symbol_table));
+ 
+@@ -369,7 +372,18 @@
+ 		if (EG(ht_iterators) != EG(ht_iterators_slots)) {
+ 			efree(EG(ht_iterators));
+ 		}
++	}
++
++	if (fast_shutdown) {
++		/* These globals may be read before the next request initializes the executor. */
++		ZVAL_UNDEF(&EG(user_error_handler));
++		ZVAL_UNDEF(&EG(user_exception_handler));
++		memset(&EG(user_error_handlers_error_reporting), 0, sizeof(EG(user_error_handlers_error_reporting)));
++		memset(&EG(user_error_handlers), 0, sizeof(EG(user_error_handlers)));
++		memset(&EG(user_exception_handlers), 0, sizeof(EG(user_exception_handlers)));
+ 	}
++	EG(error_handling) = EH_NORMAL;
++	EG(exception) = NULL;
+ 
+ #if ZEND_DEBUG
+ 	if (EG(ht_iterators_used) && !CG(unclean_shutdown)) {
+@@ -610,6 +624,10 @@
+ 
+ 	if (!EG(active)) {
+ 		return FAILURE; /* executor is already inactive */
++	}
++	if (ZEND_HAS_OOM()) {
++		zend_handle_delayed_oom();
++		return FAILURE;
+ 	}
+ 
+ 	if (EG(exception)) {
+--- a/Zend/zend_globals.h
++++ b/Zend/zend_globals.h
+@@ -174,6 +174,7 @@
+ 	zend_bool no_extensions;
+ 
+ 	zend_bool vm_interrupt;
++	zend_oom_info delayed_oom;
+ 	zend_bool timed_out;
+ 	zend_long hard_timeout;
+ 
+--- a/Zend/zend_hash.c
++++ b/Zend/zend_hash.c
+@@ -93,7 +93,7 @@
+ 	if (nSize <= HT_MIN_SIZE) {
+ 		return HT_MIN_SIZE;
+ 	} else if (UNEXPECTED(nSize >= HT_MAX_SIZE)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%u * %zu + %zu)", nSize, sizeof(Bucket), sizeof(Bucket));
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%u * %zu + %zu)", nSize, sizeof(Bucket), sizeof(Bucket));
+ 	}
+ 
+ #if defined(ZEND_WIN32)
+@@ -219,6 +219,13 @@
+ 	return ht;
+ }
+ 
++ZEND_API HashTable* ZEND_FASTCALL zend_new_array_singleton(void)
++{
++	HashTable *ht = _zend_new_array_0();
++	ht->nTableSize = 1;
++	return ht;
++}
++
+ ZEND_API HashTable* ZEND_FASTCALL _zend_new_array(uint32_t nSize)
+ {
+ 	HashTable *ht = emalloc(sizeof(HashTable));
+@@ -230,7 +237,7 @@
+ {
+ 	HT_ASSERT_RC1(ht);
+ 	if (ht->nTableSize >= HT_MAX_SIZE) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%u * %zu + %zu)", ht->nTableSize * 2, sizeof(Bucket), sizeof(Bucket));
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%u * %zu + %zu)", ht->nTableSize * 2, sizeof(Bucket), sizeof(Bucket));
+ 	}
+ 	ht->nTableSize += ht->nTableSize;
+ 	HT_SET_DATA_ADDR(ht, perealloc2(HT_GET_DATA_ADDR(ht), HT_SIZE_EX(ht->nTableSize, HT_MIN_MASK), HT_USED_SIZE(ht), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT));
+@@ -1041,7 +1048,7 @@
+ 		pefree(old_data, GC_FLAGS(ht) & IS_ARRAY_PERSISTENT);
+ 		zend_hash_rehash(ht);
+ 	} else {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%u * %zu + %zu)", ht->nTableSize * 2, sizeof(Bucket) + sizeof(uint32_t), sizeof(Bucket));
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%u * %zu + %zu)", ht->nTableSize * 2, sizeof(Bucket) + sizeof(uint32_t), sizeof(Bucket));
+ 	}
+ }
+ 
+--- a/Zend/zend_hash.h
++++ b/Zend/zend_hash.h
+@@ -276,6 +276,7 @@
+ #endif
+ 
+ ZEND_API HashTable* ZEND_FASTCALL _zend_new_array_0(void);
++ZEND_API HashTable* ZEND_FASTCALL zend_new_array_singleton(void);
+ ZEND_API HashTable* ZEND_FASTCALL _zend_new_array(uint32_t size);
+ ZEND_API uint32_t zend_array_count(HashTable *ht);
+ ZEND_API HashTable* ZEND_FASTCALL zend_array_dup(HashTable *source);
+--- a/Zend/zend_llist.c
++++ b/Zend/zend_llist.c
+@@ -112,6 +112,8 @@
+ 		current = next;
+ 	}
+ 
++	l->head  = NULL;
++	l->tail  = NULL;
+ 	l->count = 0;
+ }
+ 
+--- a/Zend/zend_multiply.h
++++ b/Zend/zend_multiply.h
+@@ -321,7 +321,7 @@
+ 	size_t ret = zend_safe_address(nmemb, size, offset, &overflow);
+ 
+ 	if (UNEXPECTED(overflow)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in memory allocation (%zu * %zu + %zu)", nmemb, size, offset);
++		zend_mm_safe_error_ex("Possible integer overflow in memory allocation (%zu * %zu + %zu)", nmemb, size, offset);
+ 		return 0;
+ 	}
+ 	return ret;
+@@ -334,7 +334,7 @@
+ 	size_t ret = zend_safe_address(nmemb, size, offset, &overflow);
+ 
+ 	if (UNEXPECTED(overflow)) {
+-		zend_error_noreturn(E_ERROR, "Possible integer overflow in %s (%zu * %zu + %zu)", message, nmemb, size, offset);
++		zend_mm_safe_error_ex("Possible integer overflow in %s (%zu * %zu + %zu)", message, nmemb, size, offset);
+ 		return 0;
+ 	}
+ 	return ret;
+--- a/Zend/zend_objects.c
++++ b/Zend/zend_objects.c
+@@ -76,6 +76,9 @@
+ 	zend_function *destructor = object->ce->destructor;
+ 
+ 	if (destructor) {
++		if (ZEND_HAS_OOM()) {
++			return;
++		}
+ 		zend_object *old_exception;
+ 		zend_class_entry *orig_fake_scope;
+ 		zend_fcall_info fci;
+--- a/Zend/zend_string.h
++++ b/Zend/zend_string.h
+@@ -76,6 +76,9 @@
+ 
+ #define _ZSTR_STRUCT_SIZE(len) (_ZSTR_HEADER_SIZE + len + 1)
+ 
++#define ZSTR_MAX_OVERHEAD (ZEND_MM_ALIGNED_SIZE(_ZSTR_HEADER_SIZE + 1))
++#define ZSTR_MAX_LEN (SIZE_MAX - ZSTR_MAX_OVERHEAD)
++
+ #define ZSTR_ALLOCA_ALLOC(str, _len, use_heap) do { \
+ 	(str) = (zend_string *)do_alloca(ZEND_MM_ALIGNED_SIZE_EX(_ZSTR_STRUCT_SIZE(_len), 8), (use_heap)); \
+ 	GC_SET_REFCOUNT(str, 1); \
+--- a/Zend/zend_strtod.c
++++ b/Zend/zend_strtod.c
+@@ -600,7 +600,7 @@
+ 		rv = (Bigint *)MALLOC(sizeof(Bigint) + (x-1)*sizeof(ULong));
+ 		if (!rv) {
+ 			FREE_DTOA_LOCK(0);
+-			zend_error_noreturn(E_ERROR, "Balloc() failed to allocate memory");
++			zend_mm_safe_error_ex("Balloc() failed to allocate memory");
+ 		}
+ #else
+ 		len = (sizeof(Bigint) + (x-1)*sizeof(ULong) + sizeof(double) - 1)
+@@ -613,7 +613,7 @@
+ 			rv = (Bigint*)MALLOC(len*sizeof(double));
+ 			if (!rv) {
+ 				FREE_DTOA_LOCK(0);
+-				zend_error_noreturn(E_ERROR, "Balloc() failed to allocate memory");
++				zend_mm_safe_error_ex("Balloc() failed to allocate memory");
+ 			}
+ #endif
+ 		rv->k = k;
+--- a/Zend/zend_types.h
++++ b/Zend/zend_types.h
+@@ -317,17 +317,21 @@
+ # define HT_HASH_RESET(ht) do { \
+ 		char *p = (char*)&HT_HASH(ht, (ht)->nTableMask); \
+ 		size_t size = HT_HASH_SIZE((ht)->nTableMask); \
+-		__m128i xmm0 = _mm_setzero_si128(); \
+-		xmm0 = _mm_cmpeq_epi8(xmm0, xmm0); \
+-		ZEND_ASSERT(size >= 64 && ((size & 0x3f) == 0)); \
+-		do { \
+-			_mm_storeu_si128((__m128i*)p, xmm0); \
+-			_mm_storeu_si128((__m128i*)(p+16), xmm0); \
+-			_mm_storeu_si128((__m128i*)(p+32), xmm0); \
+-			_mm_storeu_si128((__m128i*)(p+48), xmm0); \
+-			p += 64; \
+-			size -= 64; \
+-		} while (size != 0); \
++		if (UNEXPECTED(size < 64)) { \
++			memset(p, HT_INVALID_IDX, size); \
++		} else { \
++			__m128i xmm0 = _mm_setzero_si128(); \
++			xmm0 = _mm_cmpeq_epi8(xmm0, xmm0); \
++			ZEND_ASSERT(size >= 64 && ((size & 0x3f) == 0)); \
++			do { \
++				_mm_storeu_si128((__m128i*)p, xmm0); \
++				_mm_storeu_si128((__m128i*)(p+16), xmm0); \
++				_mm_storeu_si128((__m128i*)(p+32), xmm0); \
++				_mm_storeu_si128((__m128i*)(p+48), xmm0); \
++				p += 64; \
++				size -= 64; \
++			} while (size != 0); \
++		} \
+ 	} while (0)
+ #else
+ # define HT_HASH_RESET(ht) \
+--- a/Zend/zend_vm_def.h
++++ b/Zend/zend_vm_def.h
+@@ -320,11 +320,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			FREE_OP2();
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -2744,11 +2750,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			FREE_OP2();
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -3527,7 +3539,7 @@
+ 	fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-	if (!EG(exception) && call->func) {
++	if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 		ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 			zend_verify_internal_return_type(call->func, ret));
+ 		ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -3628,7 +3640,7 @@
+ 		fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -3719,7 +3731,7 @@
+ 		}
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -6910,12 +6922,15 @@
+ 		zend_try_catch_element *try_catch =
+ 			&EX(func)->op_array.try_catch_array[try_catch_offset];
+ 
+-		if (op_num < try_catch->catch_op && ex) {
++		if (op_num < try_catch->catch_op && ex && !zend_is_unwind_exit(ex)) {
+ 			/* Go to catch block */
+ 			cleanup_live_vars(execute_data, op_num, try_catch->catch_op);
+ 			ZEND_VM_JMP_EX(&EX(func)->op_array.opcodes[try_catch->catch_op], 0);
+ 
+ 		} else if (op_num < try_catch->finally_op) {
++			if (ex && zend_is_unwind_exit(ex)) {
++				continue;
++			}
+ 			/* Go to finally block */
+ 			zval *fast_call = EX_VAR(EX(func)->op_array.opcodes[try_catch->finally_end].op1.var);
+ 			cleanup_live_vars(execute_data, op_num, try_catch->finally_op);
+@@ -6938,7 +6953,11 @@
+ 			/* Chain potential exception from wrapping finally block */
+ 			if (Z_OBJ_P(fast_call)) {
+ 				if (ex) {
+-					zend_exception_set_previous(ex, Z_OBJ_P(fast_call));
++					if (zend_is_unwind_exit(ex)) {
++						OBJ_RELEASE(Z_OBJ_P(fast_call));
++					} else {
++						zend_exception_set_previous(ex, Z_OBJ_P(fast_call));
++					}
+ 				} else {
+ 					EG(exception) = Z_OBJ_P(fast_call);
+ 				}
+@@ -6963,6 +6982,10 @@
+ ZEND_VM_HANDLER(149, ZEND_HANDLE_EXCEPTION, ANY, ANY)
+ {
+ 	const zend_op *throw_op = EG(opline_before_exception);
++	if (UNEXPECTED(!throw_op)) {
++		free_unfinished_calls(execute_data);
++		ZEND_VM_DISPATCH_TO_HELPER(zend_dispatch_try_catch_finally_helper, try_catch_offset, -1, op_num, -1);
++	}
+ 	uint32_t throw_op_num = throw_op - EX(func)->op_array.opcodes;
+ 	int i, current_try_catch_offset = -1;
+ 
+@@ -7789,7 +7812,7 @@
+ 		}
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -8875,6 +8898,9 @@
+ 	SAVE_OPLINE();
+ 	if (EG(timed_out)) {
+ 		zend_timeout(0);
++	} else if (ZEND_HAS_OOM()) {
++		zend_handle_delayed_oom();
++		HANDLE_EXCEPTION();
+ 	} else if (zend_interrupt_function) {
+ 		zend_interrupt_function(execute_data);
+ 		ZEND_VM_ENTER();
+--- a/Zend/zend_vm_execute.h
++++ b/Zend/zend_vm_execute.h
+@@ -649,7 +649,7 @@
+ 	fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-	if (!EG(exception) && call->func) {
++	if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 		ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 			zend_verify_internal_return_type(call->func, ret));
+ 		ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -694,7 +694,7 @@
+ 	fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-	if (!EG(exception) && call->func) {
++	if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 		ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 			zend_verify_internal_return_type(call->func, ret));
+ 		ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -819,7 +819,7 @@
+ 		fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -896,7 +896,7 @@
+ 		fbc->internal_function.handler(call, ret);
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -987,7 +987,7 @@
+ 		}
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -1109,7 +1109,7 @@
+ 		}
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -1693,12 +1693,15 @@
+ 		zend_try_catch_element *try_catch =
+ 			&EX(func)->op_array.try_catch_array[try_catch_offset];
+ 
+-		if (op_num < try_catch->catch_op && ex) {
++		if (op_num < try_catch->catch_op && ex && !zend_is_unwind_exit(ex)) {
+ 			/* Go to catch block */
+ 			cleanup_live_vars(execute_data, op_num, try_catch->catch_op);
+ 			ZEND_VM_JMP_EX(&EX(func)->op_array.opcodes[try_catch->catch_op], 0);
+ 
+ 		} else if (op_num < try_catch->finally_op) {
++			if (ex && zend_is_unwind_exit(ex)) {
++				continue;
++			}
+ 			/* Go to finally block */
+ 			zval *fast_call = EX_VAR(EX(func)->op_array.opcodes[try_catch->finally_end].op1.var);
+ 			cleanup_live_vars(execute_data, op_num, try_catch->finally_op);
+@@ -1721,7 +1724,11 @@
+ 			/* Chain potential exception from wrapping finally block */
+ 			if (Z_OBJ_P(fast_call)) {
+ 				if (ex) {
+-					zend_exception_set_previous(ex, Z_OBJ_P(fast_call));
++					if (zend_is_unwind_exit(ex)) {
++						OBJ_RELEASE(Z_OBJ_P(fast_call));
++					} else {
++						zend_exception_set_previous(ex, Z_OBJ_P(fast_call));
++					}
+ 				} else {
+ 					EG(exception) = Z_OBJ_P(fast_call);
+ 				}
+@@ -1746,6 +1753,10 @@
+ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_HANDLE_EXCEPTION_SPEC_HANDLER(ZEND_OPCODE_HANDLER_ARGS)
+ {
+ 	const zend_op *throw_op = EG(opline_before_exception);
++	if (UNEXPECTED(!throw_op)) {
++		free_unfinished_calls(execute_data);
++		ZEND_VM_TAIL_CALL(zend_dispatch_try_catch_finally_helper_SPEC(-1, -1 ZEND_OPCODE_HANDLER_ARGS_PASSTHRU_CC));
++	}
+ 	uint32_t throw_op_num = throw_op - EX(func)->op_array.opcodes;
+ 	int i, current_try_catch_offset = -1;
+ 
+@@ -2003,7 +2014,7 @@
+ 		}
+ 
+ #if ZEND_DEBUG
+-		if (!EG(exception) && call->func) {
++		if (!EG(exception) && !ZEND_HAS_OOM() && call->func) {
+ 			ZEND_ASSERT(!(call->func->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE) ||
+ 				zend_verify_internal_return_type(call->func, ret));
+ 			ZEND_ASSERT((call->func->common.fn_flags & ZEND_ACC_RETURN_REFERENCE)
+@@ -2057,6 +2068,9 @@
+ 	SAVE_OPLINE();
+ 	if (EG(timed_out)) {
+ 		zend_timeout(0);
++	} else if (ZEND_HAS_OOM()) {
++		zend_handle_delayed_oom();
++		HANDLE_EXCEPTION();
+ 	} else if (zend_interrupt_function) {
+ 		zend_interrupt_function(execute_data);
+ 		ZEND_VM_ENTER();
+@@ -4968,11 +4982,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -6679,11 +6699,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -7150,11 +7176,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -9774,11 +9806,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -10243,11 +10281,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -12967,11 +13011,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -13732,11 +13782,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -14705,11 +14761,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -15346,11 +15408,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -16800,11 +16868,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -17227,11 +17301,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -38581,11 +38661,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -41090,11 +41176,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -42559,11 +42651,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -44857,11 +44955,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 			zval_ptr_dtor_nogc(free_op2);
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -48227,11 +48331,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+@@ -50659,11 +50769,17 @@
+ 		    !ZSTR_IS_INTERNED(op1_str) && GC_REFCOUNT(op1_str) == 1) {
+ 		    size_t len = ZSTR_LEN(op1_str);
+ 
++			if (UNEXPECTED(len > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_extend(op1_str, len + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str) + len, ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+ 			ZVAL_NEW_STR(EX_VAR(opline->result.var), str);
+ 
+ 		} else {
++			if (UNEXPECTED(ZSTR_LEN(op1_str) > ZSTR_MAX_LEN - ZSTR_LEN(op2_str))) {
++				zend_mm_safe_error_ex("Integer overflow in memory allocation");
++			}
+ 			str = zend_string_alloc(ZSTR_LEN(op1_str) + ZSTR_LEN(op2_str), 0);
+ 			memcpy(ZSTR_VAL(str), ZSTR_VAL(op1_str), ZSTR_LEN(op1_str));
+ 			memcpy(ZSTR_VAL(str) + ZSTR_LEN(op1_str), ZSTR_VAL(op2_str), ZSTR_LEN(op2_str)+1);
+--- a/ext/filter/filter.c
++++ b/ext/filter/filter.c
+@@ -463,7 +463,14 @@
+ 	if (array_ptr) {
+ 		/* Store the RAW variable internally */
+ 		ZVAL_STRINGL(&raw_var, *val, val_len);
++		if (ZEND_HAS_OOM()) {
++			zval_ptr_dtor(&raw_var);
++			return 0;
++		}
+ 		php_register_variable_ex(var, &raw_var, array_ptr);
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	}
+ 
+ 	if (val_len) {
+@@ -473,6 +480,10 @@
+ 			php_zval_filter(&new_var, IF_G(default_filter), IF_G(default_filter_flags), NULL, NULL, 0);
+ 		} else {
+ 			ZVAL_STRINGL(&new_var, *val, val_len);
++		}
++		if (ZEND_HAS_OOM()) {
++			zval_ptr_dtor(&new_var);
++			return 0;
+ 		}
+ 	} else { /* empty string */
+ 		ZVAL_EMPTY_STRING(&new_var);
+@@ -480,18 +491,29 @@
+ 
+ 	if (orig_array_ptr) {
+ 		php_register_variable_ex(var, &new_var, orig_array_ptr);
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	}
+ 
+ 	if (retval) {
++		char *replacement;
++
+ 		if (new_val_len) {
+ 			*new_val_len = Z_STRLEN(new_var);
+ 		}
+-		efree(*val);
+ 		if (Z_STRLEN(new_var)) {
+-			*val = estrndup(Z_STRVAL(new_var), Z_STRLEN(new_var));
++			replacement = estrndup(Z_STRVAL(new_var), Z_STRLEN(new_var));
+ 		} else {
+-			*val = estrdup("");
++			replacement = estrdup("");
++		}
++		if (ZEND_HAS_OOM()) {
++			efree(replacement);
++			zval_ptr_dtor(&new_var);
++			return 0;
+ 		}
++		efree(*val);
++		*val = replacement;
+ 		zval_ptr_dtor(&new_var);
+ 	}
+ 
+--- a/ext/filter/sanitizing_filters.c
++++ b/ext/filter/sanitizing_filters.c
+@@ -25,7 +25,7 @@
+ /* }}} */
+ 
+ /* {{{ HELPER FUNCTIONS */
+-static void php_filter_encode_html(zval *value, const unsigned char *chars)
++static zend_bool php_filter_encode_html(zval *value, const unsigned char *chars)
+ {
+ 	smart_str str = {0};
+ 	size_t len = Z_STRLEN_P(value);
+@@ -33,7 +33,7 @@
+ 	unsigned char *e = s + len;
+ 
+ 	if (Z_STRLEN_P(value) == 0) {
+-		return;
++		return 1;
+ 	}
+ 
+ 	while (s < e) {
+@@ -46,11 +46,18 @@
+ 			smart_str_appendc(&str, *s);
+ 		}
+ 		s++;
++		if (ZEND_HAS_OOM()) {
++			smart_str_free(&str);
++			zval_ptr_dtor(value);
++			ZVAL_EMPTY_STRING(value);
++			return 0;
++		}
+ 	}
+ 
+ 	smart_str_0(&str);
+ 	zval_ptr_dtor(value);
+ 	ZVAL_NEW_STR(value, str.s);
++	return 1;
+ }
+ 
+ static const unsigned char hexchars[] = "0123456789ABCDEF";
+@@ -86,6 +93,12 @@
+ 	}
+ */
+ 	str = zend_string_safe_alloc(Z_STRLEN_P(value), 3, 0, 0);
++	if (ZEND_HAS_OOM()) {
++		zend_string_release(str);
++		zval_ptr_dtor(value);
++		ZVAL_EMPTY_STRING(value);
++		return;
++	}
+ 	p = (unsigned char *) ZSTR_VAL(str);
+ 	s = (unsigned char *) Z_STRVAL_P(value);
+ 	e = s + Z_STRLEN_P(value);
+@@ -203,7 +216,9 @@
+ 		memset(enc + 127, 1, sizeof(enc) - 127);
+ 	}
+ 
+-	php_filter_encode_html(value, enc);
++	if (!php_filter_encode_html(value, enc)) {
++		return;
++	}
+ 
+ 	/* strip tags, implicitly also removes \0 chars */
+ 	new_len = php_strip_tags_ex(Z_STRVAL_P(value), Z_STRLEN_P(value), NULL, NULL, 0, 1);
+--- a/ext/session/php_session.h
++++ b/ext/session/php_session.h
+@@ -194,6 +194,7 @@
+ 	int define_sid;
+ 
+ 	php_session_rfc1867_progress *rfc1867_progress;
++	zend_bool in_rfc1867_update;
+ 	zend_bool rfc1867_enabled; /* session.upload_progress.enabled */
+ 	zend_bool rfc1867_cleanup; /* session.upload_progress.cleanup */
+ 	char *rfc1867_prefix;  /* session.upload_progress.prefix */
+--- a/ext/session/session.c
++++ b/ext/session/session.c
+@@ -120,6 +120,7 @@
+ 	PS(define_sid) = 1;
+ 	PS(session_vars) = NULL;
+ 	PS(module_number) = my_module_number;
++	PS(in_rfc1867_update) = 0;
+ 	ZVAL_UNDEF(&PS(http_session_vars));
+ }
+ /* }}} */
+@@ -835,13 +836,29 @@
+ /* ***************
+    * Serializers *
+    *************** */
++
++static void php_session_unserialize_init(php_unserialize_data_t *data)
++{
++	PHP_VAR_UNSERIALIZE_INIT(*data);
++	if (PS(in_rfc1867_update)) {
++		php_var_unserialize_set_incomplete_classes_only(*data, 1);
++	}
++}
++
++static void php_session_serialize_init(php_serialize_data_t *data)
++{
++	PHP_VAR_SERIALIZE_INIT(*data);
++	if (PS(in_rfc1867_update)) {
++		php_var_serialize_set_incomplete_classes_only(*data, 1);
++	}
++}
+ PS_SERIALIZER_ENCODE_FUNC(php_serialize) /* {{{ */
+ {
+ 	smart_str buf = {0};
+ 	php_serialize_data_t var_hash;
+ 
+ 	IF_SESSION_VARS() {
+-		PHP_VAR_SERIALIZE_INIT(var_hash);
++		php_session_serialize_init(&var_hash);
+ 		php_var_serialize(&buf, Z_REFVAL(PS(http_session_vars)), &var_hash);
+ 		PHP_VAR_SERIALIZE_DESTROY(var_hash);
+ 	}
+@@ -858,7 +875,7 @@
+ 	zend_string *var_name = zend_string_init("_SESSION", sizeof("_SESSION") - 1, 0);
+ 
+ 	ZVAL_NULL(&session_vars);
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 	result = php_var_unserialize(
+ 		&session_vars, (const unsigned char **)&val, (const unsigned char *)endptr, &var_hash);
+ 	PHP_VAR_UNSERIALIZE_DESTROY(var_hash);
+@@ -891,7 +908,7 @@
+ 	php_serialize_data_t var_hash;
+ 	PS_ENCODE_VARS;
+ 
+-	PHP_VAR_SERIALIZE_INIT(var_hash);
++	php_session_serialize_init(&var_hash);
+ 
+ 	PS_ENCODE_LOOP(
+ 			if (ZSTR_LEN(key) > PS_BIN_MAX) continue;
+@@ -916,7 +933,7 @@
+ 	php_unserialize_data_t var_hash;
+ 	zval *current, rv;
+ 
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 
+ 	for (p = val; p < endptr; ) {
+ 		namelen = ((unsigned char)(*p)) & (~PS_BIN_UNDEF);
+@@ -957,7 +974,7 @@
+ 	php_serialize_data_t var_hash;
+ 	PS_ENCODE_VARS;
+ 
+-	PHP_VAR_SERIALIZE_INIT(var_hash);
++	php_session_serialize_init(&var_hash);
+ 
+ 	PS_ENCODE_LOOP(
+ 		smart_str_appendl(&buf, ZSTR_VAL(key), ZSTR_LEN(key));
+@@ -987,7 +1004,7 @@
+ 	php_unserialize_data_t var_hash;
+ 	zval *current, rv;
+ 
+-	PHP_VAR_UNSERIALIZE_INIT(var_hash);
++	php_session_unserialize_init(&var_hash);
+ 
+ 	p = val;
+ 
+@@ -2916,6 +2933,7 @@
+ 	ps_globals->mod = NULL;
+ 	ps_globals->serializer = NULL;
+ 	ps_globals->mod_data = NULL;
++	ps_globals->in_rfc1867_update = 0;
+ 	ps_globals->session_status = php_session_none;
+ 	ps_globals->default_mod = NULL;
+ 	ps_globals->mod_user_implemented = 0;
+@@ -3127,8 +3145,11 @@
+ 		progress->next_update = Z_LVAL_P(progress->post_bytes_processed) + progress->update_step;
+ 	}
+ 
+-	php_session_initialize();
+-	PS(session_status) = php_session_active;
++	PS(in_rfc1867_update) = 1;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
+ 	IF_SESSION_VARS() {
+ 		zval *sess_var = Z_REFVAL(PS(http_session_vars));
+ 		SEPARATE_ARRAY(sess_var);
+@@ -3138,18 +3159,23 @@
+ 		zend_hash_update(Z_ARRVAL_P(sess_var), progress->key.s, &progress->data);
+ 	}
+ 	php_session_flush(1);
++	PS(in_rfc1867_update) = 0;
+ } /* }}} */
+ 
+ static void php_session_rfc1867_cleanup(php_session_rfc1867_progress *progress) /* {{{ */
+ {
+-	php_session_initialize();
+-	PS(session_status) = php_session_active;
++	PS(in_rfc1867_update) = 1;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
+ 	IF_SESSION_VARS() {
+ 		zval *sess_var = Z_REFVAL(PS(http_session_vars));
+ 		SEPARATE_ARRAY(sess_var);
+ 		zend_hash_del(Z_ARRVAL_P(sess_var), progress->key.s);
+ 	}
+ 	php_session_flush(1);
++	PS(in_rfc1867_update) = 0;
+ } /* }}} */
+ 
+ static int php_session_rfc1867_callback(unsigned int event, void *event_data, void **extra) /* {{{ */
+@@ -3160,7 +3186,7 @@
+ 	if (php_session_rfc1867_orig_callback) {
+ 		retval = php_session_rfc1867_orig_callback(event, event_data, extra);
+ 	}
+-	if (!PS(rfc1867_enabled)) {
++	if (!PS(rfc1867_enabled) || PG(modules_activated)) {
+ 		return retval;
+ 	}
+ 
+@@ -3169,6 +3195,7 @@
+ 	switch(event) {
+ 		case MULTIPART_EVENT_START: {
+ 			multipart_event_start *data = (multipart_event_start *) event_data;
++			php_rinit_session_globals();
+ 			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
+ 			progress->content_length = data->content_length;
+ 			progress->sname_len  = strlen(PS(session_name));
+@@ -3326,6 +3353,11 @@
+ 			efree(progress);
+ 			progress = NULL;
+ 			PS(rfc1867_progress) = NULL;
++			{
++				zend_string *name = zend_string_init("_SESSION", sizeof("_SESSION") - 1, 0);
++				zend_delete_global_variable(name);
++				zend_string_release_ex(name, 0);
++			}
+ 		}
+ 		break;
+ 	}
+--- a/ext/standard/basic_functions.c
++++ b/ext/standard/basic_functions.c
+@@ -3789,6 +3789,15 @@
+ }
+ /* }}} */
+ 
++/* Called before request data is parsed and before the module RINIT. */
++PHPAPI void php_basic_early_rinit(void)
++{
++	BG(serialize_lock) = 0;
++	memset(&BG(serialize), 0, sizeof(BG(serialize)));
++	memset(&BG(unserialize), 0, sizeof(BG(unserialize)));
++	php_url_scanner_early_rinit();
++}
++
+ PHP_RINIT_FUNCTION(basic) /* {{{ */
+ {
+ 	memset(BG(strtok_table), 0, 256);
+--- a/ext/standard/basic_functions.h
++++ b/ext/standard/basic_functions.h
+@@ -150,6 +150,7 @@
+ PHP_MINIT_FUNCTION(user_filters);
+ PHP_RSHUTDOWN_FUNCTION(user_filters);
+ PHP_RSHUTDOWN_FUNCTION(browscap);
++PHPAPI void php_basic_early_rinit(void);
+ 
+ /* Left for BC (not binary safe!) */
+ PHPAPI int _php_error_log(int opt_err, char *message, char *opt, char *headers);
+--- a/ext/standard/php_incomplete_class.h
++++ b/ext/standard/php_incomplete_class.h
+@@ -45,6 +45,7 @@
+ 
+ #define INCOMPLETE_CLASS "__PHP_Incomplete_Class"
+ #define MAGIC_MEMBER "__PHP_Incomplete_Class_Name"
++#define MAGIC_MEMBER_SERIALIZED "__PHP_Incomplete_Class_Serialized"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+--- a/ext/standard/php_var.h
++++ b/ext/standard/php_var.h
+@@ -45,11 +45,13 @@
+ PHPAPI int php_var_unserialize_intern(zval *rval, const unsigned char **p, const unsigned char *max, php_unserialize_data_t *var_hash);
+ 
+ PHPAPI php_serialize_data_t php_var_serialize_init(void);
++PHPAPI void php_var_serialize_set_incomplete_classes_only(php_serialize_data_t d, zend_bool enabled);
+ PHPAPI void php_var_serialize_destroy(php_serialize_data_t d);
+ PHPAPI php_unserialize_data_t php_var_unserialize_init(void);
+ PHPAPI void php_var_unserialize_destroy(php_unserialize_data_t d);
+ PHPAPI HashTable *php_var_unserialize_get_allowed_classes(php_unserialize_data_t d);
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes);
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled);
+ 
+ #define PHP_VAR_SERIALIZE_INIT(d) \
+ 	(d) = php_var_serialize_init()
+--- a/ext/standard/url_scanner_ex.c
++++ b/ext/standard/url_scanner_ex.c
+@@ -1348,6 +1348,12 @@
+ 	UNREGISTER_INI_ENTRIES();
+ 
+ 	return SUCCESS;
++}
++
++PHPAPI void php_url_scanner_early_rinit(void)
++{
++	php_url_scanner_ex_activate(1);
++	php_url_scanner_ex_activate(0);
+ }
+ 
+ PHP_RINIT_FUNCTION(url_scanner)
+--- a/ext/standard/url_scanner_ex.h
++++ b/ext/standard/url_scanner_ex.h
+@@ -24,6 +24,7 @@
+ 
+ PHP_RINIT_FUNCTION(url_scanner_ex);
+ PHP_RSHUTDOWN_FUNCTION(url_scanner_ex);
++PHPAPI void php_url_scanner_early_rinit(void);
+ 
+ PHPAPI char *php_url_scanner_adapt_single_url(const char *url, size_t urllen, const char *name, const char *value, size_t *newlen, int encode);
+ PHPAPI int php_url_scanner_add_session_var(char *name, size_t name_len, char *value, size_t value_len, int encode);
+--- a/ext/standard/var.c
++++ b/ext/standard/var.c
+@@ -34,6 +34,7 @@
+ struct php_serialize_data {
+ 	HashTable ht;
+ 	uint32_t n;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ #define COMMON (is_ref ? "&" : "")
+@@ -698,6 +699,32 @@
+ }
+ /* }}} */
+ 
++static zend_bool php_var_serialize_incomplete_raw(smart_str *buf, zval *struc)
++{
++	zval *payload = zend_hash_str_find(Z_OBJPROP_P(struc), MAGIC_MEMBER_SERIALIZED,
++		sizeof(MAGIC_MEMBER_SERIALIZED) - 1);
++	zend_string *class_name;
++
++	if (!payload || Z_TYPE_P(payload) != IS_STRING) {
++		return 0;
++	}
++	class_name = php_lookup_class_name(struc);
++	if (!class_name) {
++		return 0;
++	}
++	smart_str_appendl(buf, "C:", 2);
++	smart_str_append_unsigned(buf, ZSTR_LEN(class_name));
++	smart_str_appendl(buf, ":\"", 2);
++	smart_str_append(buf, class_name);
++	smart_str_appendl(buf, "\":", 2);
++	smart_str_append_unsigned(buf, Z_STRLEN_P(payload));
++	smart_str_appendl(buf, ":{", 2);
++	smart_str_append(buf, Z_STR_P(payload));
++	smart_str_appendc(buf, '}');
++	zend_string_release_ex(class_name, 0);
++	return 1;
++}
++
+ static int php_var_serialize_call_sleep(zval *retval, zval *struc) /* {{{ */
+ {
+ 	zval fname;
+@@ -892,6 +919,11 @@
+ 
+ 		case IS_OBJECT: {
+ 				zend_class_entry *ce = Z_OBJCE_P(struc);
++
++				if (ce == PHP_IC_ENTRY && var_hash->incomplete_classes_only
++						&& php_var_serialize_incomplete_raw(buf, struc)) {
++					return;
++				}
+ 
+ 				if (ce->serialize != NULL) {
+ 					/* has custom handler */
+@@ -1032,6 +1064,7 @@
+ 		d = emalloc(sizeof(struct php_serialize_data));
+ 		zend_hash_init(&d->ht, 16, NULL, ZVAL_PTR_DTOR, 0);
+ 		d->n = 0;
++		d->incomplete_classes_only = 0;
+ 		if (!BG(serialize_lock)) {
+ 			BG(serialize).data = d;
+ 			BG(serialize).level = 1;
+@@ -1043,6 +1076,10 @@
+ 	return d;
+ }
+ 
++PHPAPI void php_var_serialize_set_incomplete_classes_only(php_serialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
++}
++
+ PHPAPI void php_var_serialize_destroy(php_serialize_data_t d) {
+ 	/* fprintf(stderr, "SERIALIZE_DESTROY   == lock: %u, level: %u\n", BG(serialize_lock), BG(serialize).level); */
+ 	if (BG(serialize_lock) || BG(serialize).level == 1) {
+--- a/ext/standard/var_unserializer.c
++++ b/ext/standard/var_unserializer.c
+@@ -28,6 +28,7 @@
+ 	void *first_dtor;
+ 	void *last_dtor;
+ 	HashTable *allowed_classes;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ PHPAPI php_unserialize_data_t php_var_unserialize_init() {
+@@ -62,6 +63,9 @@
+ }
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes) {
+ 	d->allowed_classes = classes;
++}
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
+ }
+ 
+ 
+@@ -396,6 +400,13 @@
+ 		ZVAL_UNDEF(&key);
+ 
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
++			zval_ptr_dtor(&key);
++			return 0;
++		}
++
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
+ 			return 0;
+ 		}
+@@ -511,6 +522,9 @@
+ 			(*p)--;
+ 			return 0;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	}
+ 
+ 	return 1;
+@@ -526,7 +540,7 @@
+ 	return 1;
+ }
+ 
+-static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce)
++static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce, zend_bool keep_payload)
+ {
+ 	zend_long datalen;
+ 
+@@ -546,13 +560,22 @@
+ 		return 0;
+ 	}
+ 
+-	if (ce->unserialize == NULL) {
++	if (keep_payload) {
++		zval payload;
++		ZVAL_STRINGL(&payload, (const char *) *p, datalen);
++		object_init_ex(rval, PHP_IC_ENTRY);
++		zend_hash_str_update(Z_OBJPROP_P(rval), MAGIC_MEMBER_SERIALIZED,
++			sizeof(MAGIC_MEMBER_SERIALIZED) - 1, &payload);
++	} else if (ce->unserialize == NULL) {
+ 		zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
+ 		object_init_ex(rval, ce);
+ 	} else if (ce->unserialize(rval, ce, (const unsigned char*)*p, datalen, (zend_unserialize_data *)var_hash) != SUCCESS) {
+ 		return 0;
+ 	}
+ 
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	(*p) += datalen + 1; /* +1 for '}' */
+ 	return 1;
+ }
+@@ -603,6 +626,9 @@
+ 	}
+ 
+ 	zend_hash_extend(ht, zend_hash_num_elements(ht) + elements, HT_FLAGS(ht) & HASH_FLAG_PACKED);
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	if (!process_nested_data(UNSERIALIZE_PASSTHRU, ht, elements, 1)) {
+ 		if (has_wakeup) {
+ 			ZVAL_DEREF(rval);
+@@ -657,6 +683,9 @@
+ 	const unsigned char *cursor, *limit, *marker, *start;
+ 	zval *rval_ref;
+ 
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	limit = max;
+ 	cursor = *p;
+ 
+@@ -1202,6 +1231,11 @@
+ 	class_name = zend_string_init(str, len, 0);
+ 
+ 	do {
++		if ((*var_hash)->incomplete_classes_only) {
++			incomplete_class = 1;
++			ce = PHP_IC_ENTRY;
++			break;
++		}
+ 		if(!unserialize_allowed_class(class_name, var_hash)) {
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1281,7 +1315,7 @@
+ 	if (custom_object) {
+ 		int ret;
+ 
+-		ret = object_custom(UNSERIALIZE_PASSTHRU, ce);
++		ret = object_custom(UNSERIALIZE_PASSTHRU, ce, (*var_hash)->incomplete_classes_only);
+ 
+ 		if (ret && incomplete_class) {
+ 			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
+@@ -1297,6 +1331,10 @@
+ 	   return 0;
+ 	}
+ 
++	if (ZEND_HAS_OOM()) {
++		zend_string_release_ex(class_name, 0);
++		return 0;
++	}
+ 	if (incomplete_class) {
+ 		php_store_class_name(rval, ZSTR_VAL(class_name), len2);
+ 	}
+@@ -1353,9 +1391,15 @@
+ 
+ 	if (elements) {
+ 		array_init_size(rval, elements);
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 		/* we can't convert from packed to hash during unserialization, because
+ 		   reference to some zvals might be keept in var_hash (to support references) */
+ 		zend_hash_real_init_mixed(Z_ARRVAL_P(rval));
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	} else {
+ 		ZVAL_EMPTY_ARRAY(rval);
+ 		return finish_nested_data(UNSERIALIZE_PASSTHRU);
+--- a/ext/standard/var_unserializer.re
++++ b/ext/standard/var_unserializer.re
+@@ -27,6 +27,7 @@
+ 	void *first_dtor;
+ 	void *last_dtor;
+ 	HashTable *allowed_classes;
++	zend_bool incomplete_classes_only;
+ };
+ 
+ PHPAPI php_unserialize_data_t php_var_unserialize_init() {
+@@ -61,6 +62,9 @@
+ }
+ PHPAPI void php_var_unserialize_set_allowed_classes(php_unserialize_data_t d, HashTable *classes) {
+ 	d->allowed_classes = classes;
++}
++PHPAPI void php_var_unserialize_set_incomplete_classes_only(php_unserialize_data_t d, zend_bool enabled) {
++	d->incomplete_classes_only = enabled;
+ }
+ 
+ 
+@@ -402,6 +406,13 @@
+ 		ZVAL_UNDEF(&key);
+ 
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
++			zval_ptr_dtor(&key);
++			return 0;
++		}
++
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
+ 			return 0;
+ 		}
+@@ -517,6 +528,9 @@
+ 			(*p)--;
+ 			return 0;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	}
+ 
+ 	return 1;
+@@ -532,7 +546,7 @@
+ 	return 1;
+ }
+ 
+-static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce)
++static inline int object_custom(UNSERIALIZE_PARAMETER, zend_class_entry *ce, zend_bool keep_payload)
+ {
+ 	zend_long datalen;
+ 
+@@ -552,13 +566,22 @@
+ 		return 0;
+ 	}
+ 
+-	if (ce->unserialize == NULL) {
++	if (keep_payload) {
++		zval payload;
++		ZVAL_STRINGL(&payload, (const char *) *p, datalen);
++		object_init_ex(rval, PHP_IC_ENTRY);
++		zend_hash_str_update(Z_OBJPROP_P(rval), MAGIC_MEMBER_SERIALIZED,
++			sizeof(MAGIC_MEMBER_SERIALIZED) - 1, &payload);
++	} else if (ce->unserialize == NULL) {
+ 		zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
+ 		object_init_ex(rval, ce);
+ 	} else if (ce->unserialize(rval, ce, (const unsigned char*)*p, datalen, (zend_unserialize_data *)var_hash) != SUCCESS) {
+ 		return 0;
+ 	}
+ 
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	(*p) += datalen + 1; /* +1 for '}' */
+ 	return 1;
+ }
+@@ -609,6 +632,9 @@
+ 	}
+ 
+ 	zend_hash_extend(ht, zend_hash_num_elements(ht) + elements, HT_FLAGS(ht) & HASH_FLAG_PACKED);
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	if (!process_nested_data(UNSERIALIZE_PASSTHRU, ht, elements, 1)) {
+ 		if (has_wakeup) {
+ 			ZVAL_DEREF(rval);
+@@ -663,6 +689,9 @@
+ 	const unsigned char *cursor, *limit, *marker, *start;
+ 	zval *rval_ref;
+ 
++	if (ZEND_HAS_OOM()) {
++		return 0;
++	}
+ 	limit = max;
+ 	cursor = *p;
+ 
+@@ -883,9 +912,15 @@
+ 
+ 	if (elements) {
+ 		array_init_size(rval, elements);
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 		/* we can't convert from packed to hash during unserialization, because
+ 		   reference to some zvals might be keept in var_hash (to support references) */
+ 		zend_hash_real_init_mixed(Z_ARRVAL_P(rval));
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
+ 	} else {
+ 		ZVAL_EMPTY_ARRAY(rval);
+ 		return finish_nested_data(UNSERIALIZE_PASSTHRU);
+@@ -964,6 +999,11 @@
+ 	class_name = zend_string_init(str, len, 0);
+ 
+ 	do {
++		if ((*var_hash)->incomplete_classes_only) {
++			incomplete_class = 1;
++			ce = PHP_IC_ENTRY;
++			break;
++		}
+ 		if(!unserialize_allowed_class(class_name, var_hash)) {
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1043,7 +1083,7 @@
+ 	if (custom_object) {
+ 		int ret;
+ 
+-		ret = object_custom(UNSERIALIZE_PASSTHRU, ce);
++		ret = object_custom(UNSERIALIZE_PASSTHRU, ce, (*var_hash)->incomplete_classes_only);
+ 
+ 		if (ret && incomplete_class) {
+ 			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
+@@ -1059,6 +1099,10 @@
+ 	   return 0;
+ 	}
+ 
++	if (ZEND_HAS_OOM()) {
++		zend_string_release_ex(class_name, 0);
++		return 0;
++	}
+ 	if (incomplete_class) {
+ 		php_store_class_name(rval, ZSTR_VAL(class_name), len2);
+ 	}
+--- a/main/SAPI.c
++++ b/main/SAPI.c
+@@ -170,6 +170,9 @@
+ {
+ 	if (SG(request_info).post_entry && SG(request_info).content_type_dup) {
+ 		SG(request_info).post_entry->post_handler(SG(request_info).content_type_dup, arg);
++		if (ZEND_HAS_OOM()) {
++			zend_handle_delayed_oom();
++		}
+ 		efree(SG(request_info).content_type_dup);
+ 		SG(request_info).content_type_dup = NULL;
+ 	}
+@@ -513,18 +516,23 @@
+ 	}
+ 	if (SG(request_info).auth_user) {
+ 		efree(SG(request_info).auth_user);
++		SG(request_info).auth_user = NULL;
+ 	}
+ 	if (SG(request_info).auth_password) {
+ 		efree(SG(request_info).auth_password);
++		SG(request_info).auth_password = NULL;
+ 	}
+ 	if (SG(request_info).auth_digest) {
+ 		efree(SG(request_info).auth_digest);
++		SG(request_info).auth_digest = NULL;
+ 	}
+ 	if (SG(request_info).content_type_dup) {
+ 		efree(SG(request_info).content_type_dup);
++		SG(request_info).content_type_dup = NULL;
+ 	}
+ 	if (SG(request_info).current_user) {
+ 		efree(SG(request_info).current_user);
++		SG(request_info).current_user = NULL;
+ 	}
+ 	if (sapi_module.deactivate) {
+ 		sapi_module.deactivate();
+--- a/main/main.c
++++ b/main/main.c
+@@ -54,6 +54,7 @@
+ #include "php_syslog.h"
+ #include "fopen_wrappers.h"
+ #include "ext/standard/php_standard.h"
++#include "ext/standard/basic_functions.h"
+ #include "ext/standard/php_string.h"
+ #include "ext/date/php_date.h"
+ #include "php_variables.h"
+@@ -782,6 +783,7 @@
+ 	PHP_INI_ENTRY("disable_functions",			"",			PHP_INI_SYSTEM,		NULL)
+ 	PHP_INI_ENTRY("disable_classes",			"",			PHP_INI_SYSTEM,		NULL)
+ 	PHP_INI_ENTRY("max_file_uploads",			"20",			PHP_INI_SYSTEM|PHP_INI_PERDIR,		NULL)
++	PHP_INI_ENTRY("max_multipart_body_parts",	"-1",			PHP_INI_SYSTEM|PHP_INI_PERDIR,		NULL)
+ 
+ 	STD_PHP_INI_BOOLEAN("allow_url_fopen",		"1",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_fopen,		php_core_globals,		core_globals)
+ 	STD_PHP_INI_BOOLEAN("allow_url_include",	"0",		PHP_INI_SYSTEM,		OnUpdateBool,		allow_url_include,		php_core_globals,		core_globals)
+@@ -940,6 +942,9 @@
+ 	char *origin;
+ 	char *message;
+ 	int is_function = 0;
++	if (ZEND_HAS_OOM()) {
++		return;
++	}
+ 
+ 	/* get error text into buffer and escape for html if necessary */
+ 	buffer_len = (int)vspprintf(&buffer, 0, format, args);
+@@ -1628,9 +1633,9 @@
+ }
+ /* }}} */
+ 
+-/* {{{ php_free_request_globals
++/* {{{ php_clear_last_error
+  */
+-static void php_free_request_globals(void)
++static void php_clear_last_error(void)
+ {
+ 	if (PG(last_error_message)) {
+ 		free(PG(last_error_message));
+@@ -1640,6 +1645,14 @@
+ 		free(PG(last_error_file));
+ 		PG(last_error_file) = NULL;
+ 	}
++}
++/* }}} */
++
++/* {{{ php_free_request_globals
++ */
++static void php_free_request_globals(void)
++{
++	php_clear_last_error();
+ 	if (PG(php_sys_temp_dir)) {
+ 		efree(PG(php_sys_temp_dir));
+ 		PG(php_sys_temp_dir) = NULL;
+@@ -1787,6 +1800,7 @@
+ 		PG(in_user_include) = 0;
+ 
+ 		zend_activate();
++		php_basic_early_rinit();
+ 		sapi_activate();
+ 
+ #ifdef ZEND_SIGNALS
+@@ -1855,6 +1869,7 @@
+ 	zend_bool report_memleaks;
+ 
+ 	EG(flags) |= EG_FLAGS_IN_SHUTDOWN;
++	EG(delayed_oom).state = ZEND_OOM_STATE_NONE;
+ 
+ 	report_memleaks = PG(report_memleaks);
+ 
+@@ -1918,6 +1933,8 @@
+ 
+ 		for (i=0; i<NUM_TRACK_VARS; i++) {
+ 			zval_ptr_dtor(&PG(http_globals)[i]);
++			/* May be accessed before php_request_startup() */
++			ZVAL_UNDEF(&PG(http_globals)[i]);
+ 		}
+ 	} zend_end_try();
+ 
+@@ -1947,6 +1964,8 @@
+ 
+ 	/* 15. Free Willy (here be crashes) */
+ 	zend_interned_strings_deactivate();
++	/* Diagnostics during post-RSHUTDOWN may have set request-owned data again. */
++	php_clear_last_error();
+ 	zend_try {
+ 		shutdown_memory_manager(CG(unclean_shutdown) || !report_memleaks, 0);
+ 	} zend_end_try();
+@@ -1971,6 +1990,9 @@
+ #ifdef HAVE_DTRACE
+ 	DTRACE_REQUEST_SHUTDOWN(SAFE_FILENAME(SG(request_info).path_translated), SAFE_FILENAME(SG(request_info).request_uri), (char *)SAFE_FILENAME(SG(request_info).request_method));
+ #endif /* HAVE_DTRACE */
++
++	/* May be accessed before php_request_startup() */
++	PG(modules_activated) = 0;
+ }
+ /* }}} */
+ 
+--- a/main/php_variables.c
++++ b/main/php_variables.c
+@@ -178,6 +178,11 @@
+ 				free_alloca(var_orig, use_heap);
+ 				return;
+ 			}
++			if (ZEND_HAS_OOM()) {
++				zval_ptr_dtor_nogc(val);
++				free_alloca(var_orig, use_heap);
++				return;
++			}
+ 
+ 			ip++;
+ 			index_s = ip;
+@@ -204,7 +209,7 @@
+ 			}
+ 
+ 			if (!index) {
+-				array_init(&gpc_element);
++				array_init_singleton(&gpc_element);
+ 				if ((gpc_element_p = zend_hash_next_index_insert(symtable1, &gpc_element)) == NULL) {
+ 					zend_array_destroy(Z_ARR(gpc_element));
+ 					zval_ptr_dtor_nogc(val);
+@@ -215,7 +220,7 @@
+ 				gpc_element_p = zend_symtable_str_find(symtable1, index, index_len);
+ 				if (!gpc_element_p) {
+ 					zval tmp;
+-					array_init(&tmp);
++					array_init_singleton(&tmp);
+ 					gpc_element_p = zend_symtable_str_update_ind(symtable1, index, index_len, &tmp);
+ 				} else {
+ 					if (Z_TYPE_P(gpc_element_p) == IS_INDIRECT) {
+@@ -223,7 +228,7 @@
+ 					}
+ 					if (Z_TYPE_P(gpc_element_p) != IS_ARRAY) {
+ 						zval_ptr_dtor_nogc(gpc_element_p);
+-						array_init(gpc_element_p);
++						array_init_singleton(gpc_element_p);
+ 					} else {
+ 						SEPARATE_ARRAY(gpc_element_p);
+ 					}
+@@ -318,6 +323,10 @@
+ 	php_url_decode(var->ptr, klen);
+ 
+ 	val = estrndup(ksep, vlen);
++	if (ZEND_HAS_OOM()) {
++		efree(val);
++		return 0;
++	}
+ 	if (vlen) {
+ 		vlen = php_url_decode(val, vlen);
+ 	}
+@@ -325,6 +334,10 @@
+ 	if (sapi_module.input_filter(PARSE_POST, var->ptr, &val, vlen, &new_vlen)) {
+ 		php_register_variable_safe(var->ptr, val, new_vlen, arr);
+ 	}
++	if (ZEND_HAS_OOM()) {
++		efree(val);
++		return 0;
++	}
+ 	efree(val);
+ 
+ 	var->ptr = vsep + (vsep != var->end);
+@@ -346,7 +359,13 @@
+ 					max_vars);
+ 			return FAILURE;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			return FAILURE;
++		}
+ 	}
++	if (ZEND_HAS_OOM()) {
++		return FAILURE;
++	}
+ 
+ 	if (!eof && ZSTR_VAL(vars->str.s) != vars->ptr) {
+ 		memmove(ZSTR_VAL(vars->str.s), vars->ptr, ZSTR_LEN(vars->str.s) = vars->end - vars->ptr);
+@@ -374,6 +393,10 @@
+ 
+ 			if (len && len != (size_t) -1) {
+ 				smart_str_appendl(&post_data.str, buf, len);
++				if (ZEND_HAS_OOM()) {
++					smart_str_free(&post_data.str);
++					return;
++				}
+ 
+ 				if (SUCCESS != add_post_vars(arr, &post_data, 0)) {
+ 					smart_str_free(&post_data.str);
+@@ -415,7 +438,7 @@
+ 		case PARSE_POST:
+ 		case PARSE_GET:
+ 		case PARSE_COOKIE:
+-			array_init(&array);
++			array_init_singleton(&array);
+ 			switch (arg) {
+ 				case PARSE_POST:
+ 					zval_ptr_dtor_nogc(&PG(http_globals)[TRACK_VARS_POST]);
+--- a/main/rfc1867.c
++++ b/main/rfc1867.c
+@@ -59,7 +59,7 @@
+ 
+ PHPAPI int (*php_rfc1867_callback)(unsigned int event, void *event_data, void **extra) = NULL;
+ 
+-static void safe_php_register_variable(char *var, char *strval, size_t val_len, zval *track_vars_array, zend_bool override_protection);
++static zend_bool safe_php_register_variable(char *var, char *strval, size_t val_len, zval *track_vars_array, zend_bool override_protection);
+ 
+ /* The longest property name we use in an uploaded file array */
+ #define MAX_SIZE_OF_INDEX sizeof("[tmp_name]")
+@@ -148,10 +148,11 @@
+ }
+ /* }}} */
+ 
+-static void add_protected_variable(char *varname) /* {{{ */
++static zend_bool add_protected_variable(char *varname) /* {{{ */
+ {
+ 	normalize_protected_variable(varname);
+ 	zend_hash_str_add_empty_element(&PG(rfc1867_protected_variables), varname, strlen(varname));
++	return !ZEND_HAS_OOM();
+ }
+ /* }}} */
+ 
+@@ -162,31 +163,33 @@
+ }
+ /* }}} */
+ 
+-static void safe_php_register_variable(char *var, char *strval, size_t val_len, zval *track_vars_array, zend_bool override_protection) /* {{{ */
++static zend_bool safe_php_register_variable(char *var, char *strval, size_t val_len, zval *track_vars_array, zend_bool override_protection) /* {{{ */
+ {
+ 	if (override_protection || !is_protected_variable(var)) {
+ 		php_register_variable_safe(var, strval, val_len, track_vars_array);
+ 	}
++	return !ZEND_HAS_OOM();
+ }
+ /* }}} */
+ 
+-static void safe_php_register_variable_ex(char *var, zval *val, zval *track_vars_array, zend_bool override_protection) /* {{{ */
++static zend_bool safe_php_register_variable_ex(char *var, zval *val, zval *track_vars_array, zend_bool override_protection) /* {{{ */
+ {
+ 	if (override_protection || !is_protected_variable(var)) {
+ 		php_register_variable_ex(var, val, track_vars_array);
+ 	}
++	return !ZEND_HAS_OOM();
+ }
+ /* }}} */
+ 
+-static void register_http_post_files_variable(char *strvar, char *val, zval *http_post_files, zend_bool override_protection) /* {{{ */
++static zend_bool register_http_post_files_variable(char *strvar, char *val, zval *http_post_files, zend_bool override_protection) /* {{{ */
+ {
+-	safe_php_register_variable(strvar, val, strlen(val), http_post_files, override_protection);
++	return safe_php_register_variable(strvar, val, strlen(val), http_post_files, override_protection);
+ }
+ /* }}} */
+ 
+-static void register_http_post_files_variable_ex(char *var, zval *val, zval *http_post_files, zend_bool override_protection) /* {{{ */
++static zend_bool register_http_post_files_variable_ex(char *var, zval *val, zval *http_post_files, zend_bool override_protection) /* {{{ */
+ {
+-	safe_php_register_variable_ex(var, val, http_post_files, override_protection);
++	return safe_php_register_variable_ex(var, val, http_post_files, override_protection);
+ }
+ /* }}} */
+ 
+@@ -405,6 +408,14 @@
+ 	return 0;
+ }
+ 
++static zend_bool php_mime_should_save_hdr(const char *name)
++{
++	return !strcasecmp(name, "Content-Disposition")
++		|| !strcasecmp(name, "Content-Type");
++}
++
++static char *php_mime_get_hdr_value(zend_llist header, char *key);
++
+ /* parse headers */
+ static int multipart_buffer_headers(multipart_buffer *self, zend_llist *header)
+ {
+@@ -445,15 +456,24 @@
+ 			}
+ 
+ 			*value = '\0';
+-			do { value++; } while (isspace(*value));
+ 
+-			key = estrdup(line);
+-			smart_string_appends(&buf_value, value);
++			/* Keep only headers we use, and ignore duplicates */
++			if (!php_mime_should_save_hdr(line)
++					|| php_mime_get_hdr_value(*header, line)) {
++				key = NULL;
++			} else {
++				key = estrdup(line);
++				do { value++; } while (isspace((unsigned char)*value));
++				smart_string_appends(&buf_value, value);
++			}
+ 		} else if (buf_value.c) { /* If no ':' on the line, add to previous line */
+ 			smart_string_appends(&buf_value, line);
+ 		} else {
+ 			continue;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			goto oom;
++		}
+ 	}
+ 
+ 	if (buf_value.c && key) {
+@@ -465,6 +485,13 @@
+ 	}
+ 
+ 	return 1;
++
++oom:
++	if (key) {
++		efree(key);
++	}
++	smart_string_free(&buf_value);
++	return 0;
+ }
+ 
+ static char *php_mime_get_hdr_value(zend_llist header, char *key)
+@@ -522,11 +549,11 @@
+ 	return res;
+ }
+ 
+-static char *substring_conf(char *start, int len, char quote)
++static char *substring_conf(char *start, size_t len, char quote)
+ {
+ 	char *result = emalloc(len + 1);
+ 	char *resp = result;
+-	int i;
++	size_t i;
+ 
+ 	for (i = 0; i < len && start[i] != quote; ++i) {
+ 		if (start[i] == '\\' && (start[i + 1] == '\\' || (quote && start[i + 1] == quote))) {
+@@ -554,14 +581,14 @@
+ 		char quote = *str;
+ 
+ 		str++;
+-		return substring_conf(str, (int)strlen(str), quote);
++		return substring_conf(str, strlen(str), quote);
+ 	} else {
+ 		char *strend = str;
+ 
+ 		while (*strend && !isspace(*strend)) {
+ 			++strend;
+ 		}
+-		return substring_conf(str, strend - str, 0);
++		return substring_conf(str, (size_t)(strend - str), 0);
+ 	}
+ }
+ 
+@@ -666,7 +693,13 @@
+ 	size_t total_bytes=0, read_bytes=0;
+ 
+ 	while((read_bytes = multipart_buffer_read(self, buf, sizeof(buf), NULL))) {
+-		out = erealloc(out, total_bytes + read_bytes + 1);
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
++		out = safe_erealloc(out, 1, total_bytes, read_bytes + 1);
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
+ 		memcpy(out + total_bytes, buf, read_bytes);
+ 		total_bytes += read_bytes;
+ 	}
+@@ -702,6 +735,7 @@
+ 	void *event_extra_data = NULL;
+ 	unsigned int llen = 0;
+ 	int upload_cnt = INI_INT("max_file_uploads");
++	int body_parts_cnt = INI_INT("max_multipart_body_parts");
+ 	const zend_encoding *internal_encoding = zend_multibyte_get_internal_encoding();
+ 	php_rfc1867_getword_t getword;
+ 	php_rfc1867_getword_conf_t getword_conf;
+@@ -723,6 +757,11 @@
+ 		return;
+ 	}
+ 
++	if (body_parts_cnt < 0) {
++		body_parts_cnt = PG(max_input_vars) + upload_cnt;
++	}
++	int body_parts_limit = body_parts_cnt;
++
+ 	/* Get the boundary */
+ 	boundary = strstr(content_type_dup, "boundary");
+ 	if (!boundary) {
+@@ -780,6 +819,9 @@
+ 	}
+ 
+ 	zend_llist_init(&header, sizeof(mime_header_entry), (llist_dtor_func_t) php_free_hdr_entry, 0);
++	if (ZEND_HAS_OOM()) {
++		goto fileupload_done;
++	}
+ 
+ 	if (php_rfc1867_callback != NULL) {
+ 		multipart_event_start event_start;
+@@ -788,6 +830,9 @@
+ 		if (php_rfc1867_callback(MULTIPART_EVENT_START, &event_start, &event_extra_data) == FAILURE) {
+ 			goto fileupload_done;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			goto fileupload_done;
++		}
+ 	}
+ 
+ 	while (!multipart_buffer_eof(mbuff))
+@@ -798,6 +843,9 @@
+ 		zend_off_t offset;
+ 
+ 		zend_llist_clean(&header);
++		if (ZEND_HAS_OOM()) {
++			goto fileupload_done;
++		}
+ 
+ 		if (!multipart_buffer_headers(mbuff, &header)) {
+ 			goto fileupload_done;
+@@ -806,6 +854,11 @@
+ 		if ((cd = php_mime_get_hdr_value(header, "Content-Disposition"))) {
+ 			char *pair = NULL;
+ 			int end = 0;
++
++			if (--body_parts_cnt < 0) {
++				php_error_docref(NULL, E_WARNING, "Multipart body parts limit exceeded %d. To increase the limit change max_multipart_body_parts in php.ini.", body_parts_limit);
++				goto fileupload_done;
++			}
+ 
+ 			while (isspace(*cd)) {
+ 				++cd;
+@@ -814,6 +867,10 @@
+ 			while (*cd && (pair = getword(mbuff->input_encoding, &cd, ';')))
+ 			{
+ 				char *key = NULL, *word = pair;
++				if (ZEND_HAS_OOM()) {
++					efree(word);
++					break;
++				}
+ 
+ 				while (isspace(*cd)) {
+ 					++cd;
+@@ -821,6 +878,11 @@
+ 
+ 				if (strchr(pair, '=')) {
+ 					key = getword(mbuff->input_encoding, &pair, '=');
++					if (ZEND_HAS_OOM()) {
++						efree(word);
++						efree(key);
++						break;
++					}
+ 
+ 					if (!strcasecmp(key, "name")) {
+ 						if (param) {
+@@ -849,18 +911,33 @@
+ 							}
+ 						}
+ 					}
++					if (ZEND_HAS_OOM()) {
++						efree(word);
++						efree(key);
++						break;
++					}
+ 				}
+ 				if (key) {
+ 					efree(key);
+ 				}
+ 				efree(word);
+ 			}
++			if (ZEND_HAS_OOM()) {
++				if (filename) efree(filename);
++				if (param) efree(param);
++				goto fileupload_done;
++			}
+ 
+ 			/* Normal form variable, safe to read all data into memory */
+ 			if (!filename && param) {
+ 				size_t value_len;
+ 				char *value = multipart_buffer_read_body(mbuff, &value_len);
+ 				size_t new_val_len; /* Dummy variable */
++				if (ZEND_HAS_OOM()) {
++					if (value) efree(value);
++					efree(param);
++					goto fileupload_done;
++				}
+ 
+ 				if (!value) {
+ 					value = estrdup("");
+@@ -878,6 +955,11 @@
+ 				}
+ 
+ 				if (++count <= PG(max_input_vars) && sapi_module.input_filter(PARSE_POST, param, &value, value_len, &new_val_len)) {
++					if (ZEND_HAS_OOM()) {
++						efree(param);
++						efree(value);
++						goto fileupload_done;
++					}
+ 					if (php_rfc1867_callback != NULL) {
+ 						multipart_event_formdata event_formdata;
+ 						size_t newlength = new_val_len;
+@@ -892,9 +974,18 @@
+ 							efree(value);
+ 							continue;
+ 						}
++						if (ZEND_HAS_OOM()) {
++							efree(param);
++							efree(value);
++							goto fileupload_done;
++						}
+ 						new_val_len = newlength;
+ 					}
+-					safe_php_register_variable(param, value, new_val_len, array_ptr, 0);
++					if (!safe_php_register_variable(param, value, new_val_len, array_ptr, 0)) {
++						efree(param);
++						efree(value);
++						goto fileupload_done;
++					}
+ 				} else {
+ 					if (count == PG(max_input_vars) + 1) {
+ 						php_error_docref(NULL, E_WARNING, "Input variables exceeded " ZEND_LONG_FMT ". To increase the limit change max_input_vars in php.ini.", PG(max_input_vars));
+@@ -909,8 +1000,18 @@
+ 						event_formdata.length = value_len;
+ 						event_formdata.newlength = NULL;
+ 						php_rfc1867_callback(MULTIPART_EVENT_FORMDATA, &event_formdata, &event_extra_data);
++						if (ZEND_HAS_OOM()) {
++							efree(param);
++							efree(value);
++							goto fileupload_done;
++						}
+ 					}
+ 				}
++				if (ZEND_HAS_OOM()) {
++					efree(param);
++					efree(value);
++					goto fileupload_done;
++				}
+ 
+ 				if (!strcasecmp(param, "MAX_FILE_SIZE")) {
+ #ifdef HAVE_ATOLL
+@@ -989,6 +1090,11 @@
+ 					efree(param);
+ 					efree(filename);
+ 					continue;
++				}
++				if (ZEND_HAS_OOM()) {
++					efree(param);
++					efree(filename);
++					goto fileupload_done;
+ 				}
+ 			}
+ 
+@@ -1040,6 +1146,10 @@
+ 						cancel_upload = UPLOAD_ERROR_X;
+ 						continue;
+ 					}
++					if (ZEND_HAS_OOM()) {
++						cancel_upload = UPLOAD_ERROR_X;
++						continue;
++					}
+ 				}
+ 
+ 				if (PG(upload_max_filesize) > 0 && (zend_long)(total_bytes+blen) > PG(upload_max_filesize)) {
+@@ -1105,6 +1215,9 @@
+ 				if (php_rfc1867_callback(MULTIPART_EVENT_FILE_END, &event_file_end, &event_extra_data) == FAILURE) {
+ 					cancel_upload = UPLOAD_ERROR_X;
+ 				}
++				if (ZEND_HAS_OOM()) {
++					cancel_upload = UPLOAD_ERROR_X;
++				}
+ 			}
+ 
+ 			if (cancel_upload) {
+@@ -1118,6 +1231,11 @@
+ 			} else {
+ 				zend_hash_add_ptr(SG(rfc1867_uploaded_files), temp_filename, temp_filename);
+ 			}
++			if (ZEND_HAS_OOM()) {
++				efree(filename);
++				efree(param);
++				goto fileupload_done;
++			}
+ 
+ 			/* is_arr_upload is true when name of file upload field
+ 			 * ends in [.*]
+@@ -1130,6 +1248,11 @@
+ 					efree(array_index);
+ 				}
+ 				array_index = estrndup(start_arr + 1, array_len - 2);
++				if (ZEND_HAS_OOM()) {
++					efree(filename);
++					efree(param);
++					goto fileupload_done;
++				}
+ 			}
+ 
+ 			/* Add $foo_name */
+@@ -1137,11 +1260,21 @@
+ 				llen = (int)strlen(param);
+ 				lbuf = (char *) safe_erealloc(lbuf, llen, 1, MAX_SIZE_OF_INDEX + 1);
+ 				llen += MAX_SIZE_OF_INDEX + 1;
++				if (ZEND_HAS_OOM()) {
++					efree(filename);
++					efree(param);
++					goto fileupload_done;
++				}
+ 			}
+ 
+ 			if (is_arr_upload) {
+ 				if (abuf) efree(abuf);
+ 				abuf = estrndup(param, strlen(param)-array_len);
++				if (ZEND_HAS_OOM()) {
++					efree(filename);
++					efree(param);
++					goto fileupload_done;
++				}
+ 				snprintf(lbuf, llen, "%s_name[%s]", abuf, array_index);
+ 			} else {
+ 				snprintf(lbuf, llen, "%s_name", param);
+@@ -1158,7 +1291,9 @@
+ 			}
+ 
+ 			if (!is_anonymous) {
+-				safe_php_register_variable(lbuf, s, strlen(s), NULL, 0);
++				if (!safe_php_register_variable(lbuf, s, strlen(s), NULL, 0)) {
++					goto oom_with_filename;
++				}
+ 			}
+ 
+ 			/* Add $foo[name] */
+@@ -1167,7 +1302,9 @@
+ 			} else {
+ 				snprintf(lbuf, llen, "%s[name]", param);
+ 			}
+-			register_http_post_files_variable(lbuf, s, &PG(http_globals)[TRACK_VARS_FILES], 0);
++			if (!register_http_post_files_variable(lbuf, s, &PG(http_globals)[TRACK_VARS_FILES], 0)) {
++				goto oom_with_filename;
++			}
+ 			efree(filename);
+ 			s = NULL;
+ 
+@@ -1189,7 +1326,9 @@
+ 				snprintf(lbuf, llen, "%s_type", param);
+ 			}
+ 			if (!is_anonymous) {
+-				safe_php_register_variable(lbuf, cd, strlen(cd), NULL, 0);
++				if (!safe_php_register_variable(lbuf, cd, strlen(cd), NULL, 0)) {
++					goto oom_with_param;
++				}
+ 			}
+ 
+ 			/* Add $foo[type] */
+@@ -1198,7 +1337,9 @@
+ 			} else {
+ 				snprintf(lbuf, llen, "%s[type]", param);
+ 			}
+-			register_http_post_files_variable(lbuf, cd, &PG(http_globals)[TRACK_VARS_FILES], 0);
++			if (!register_http_post_files_variable(lbuf, cd, &PG(http_globals)[TRACK_VARS_FILES], 0)) {
++				goto oom_with_param;
++			}
+ 
+ 			/* Restore Content-Type Header */
+ 			if (s != NULL) {
+@@ -1212,7 +1353,9 @@
+ 				zval zfilename;
+ 
+ 				/* Initialize variables */
+-				add_protected_variable(param);
++				if (!add_protected_variable(param)) {
++					goto oom_with_param;
++				}
+ 
+ 				/* if param is of form xxx[.*] this will cut it to xxx */
+ 				if (!is_anonymous) {
+@@ -1221,7 +1364,9 @@
+ 					} else {
+ 						ZVAL_EMPTY_STRING(&zfilename);
+ 					}
+-					safe_php_register_variable_ex(param, &zfilename, NULL, 1);
++					if (!safe_php_register_variable_ex(param, &zfilename, NULL, 1)) {
++						goto oom_with_param;
++					}
+ 				}
+ 
+ 				/* Add $foo[tmp_name] */
+@@ -1230,13 +1375,17 @@
+ 				} else {
+ 					snprintf(lbuf, llen, "%s[tmp_name]", param);
+ 				}
+-				add_protected_variable(lbuf);
++				if (!add_protected_variable(lbuf)) {
++					goto oom_with_param;
++				}
+ 				if (temp_filename) {
+ 					ZVAL_STR_COPY(&zfilename, temp_filename);
+ 				} else {
+ 					ZVAL_EMPTY_STRING(&zfilename);
+ 				}
+-				register_http_post_files_variable_ex(lbuf, &zfilename, &PG(http_globals)[TRACK_VARS_FILES], 1);
++				if (!register_http_post_files_variable_ex(lbuf, &zfilename, &PG(http_globals)[TRACK_VARS_FILES], 1)) {
++					goto oom_with_param;
++				}
+ 			}
+ 
+ 			{
+@@ -1274,7 +1423,9 @@
+ 				} else {
+ 					snprintf(lbuf, llen, "%s[error]", param);
+ 				}
+-				register_http_post_files_variable_ex(lbuf, &error_type, &PG(http_globals)[TRACK_VARS_FILES], 0);
++				if (!register_http_post_files_variable_ex(lbuf, &error_type, &PG(http_globals)[TRACK_VARS_FILES], 0)) {
++					goto oom_with_param;
++				}
+ 
+ 				/* Add $foo_size */
+ 				if (is_arr_upload) {
+@@ -1286,7 +1437,9 @@
+ 					if (size_overflow) {
+ 						ZVAL_STRING(&file_size, file_size_buf);
+ 					}
+-					safe_php_register_variable_ex(lbuf, &file_size, NULL, size_overflow);
++					if (!safe_php_register_variable_ex(lbuf, &file_size, NULL, size_overflow)) {
++						goto oom_with_param;
++					}
+ 				}
+ 
+ 				/* Add $foo[size] */
+@@ -1298,9 +1451,18 @@
+ 				if (size_overflow) {
+ 					ZVAL_STRING(&file_size, file_size_buf);
+ 				}
+-				register_http_post_files_variable_ex(lbuf, &file_size, &PG(http_globals)[TRACK_VARS_FILES], size_overflow);
++				if (!register_http_post_files_variable_ex(lbuf, &file_size, &PG(http_globals)[TRACK_VARS_FILES], size_overflow)) {
++					goto oom_with_param;
++				}
+ 			}
+ 			efree(param);
++			continue;
++
++oom_with_filename:
++			efree(filename);
++oom_with_param:
++			efree(param);
++			goto fileupload_done;
+ 		}
+ 	}
+ 
+--- a/main/streams/streams.c
++++ b/main/streams/streams.c
+@@ -894,6 +894,9 @@
+ 			}
+ 
+ 			if (grow_mode) {
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				/* allow room for a NUL. If this realloc is really a realloc
+ 				 * (ie: second time around), we get an extra byte. In most
+ 				 * cases, with the default chunk size of 8K, we will only
+@@ -1377,6 +1380,9 @@
+ 
+ 		if (p) {
+ 			do {
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				/* output functions return int, so pass in int max */
+ 				if (0 < (b = PHPWRITE(p + bcount, MIN(mapped - bcount, INT_MAX)))) {
+ 					bcount += b;
+@@ -1390,6 +1396,9 @@
+ 	}
+ 
+ 	while ((b = php_stream_read(stream, buf, sizeof(buf))) > 0) {
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
+ 		PHPWRITE(buf, b);
+ 		bcount += b;
+ 	}

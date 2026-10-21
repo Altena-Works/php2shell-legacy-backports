@@ -41,6 +41,8 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 
 7.3.33 機能維持候補にも同じ basic/URL リライター早期要求リセットを移植した。固定済み公式アーカイブの展開ソースへ fuzz なしで適用でき、続く遅延 OOM 実験差分も fuzz なしで適用できる。Linux/amd64・Apache/mod_php の増分ビルドと、通常セッション・multipart・進捗・無害な `Serializable` 値維持を確認した。生成済み `var_unserializer.c` のビルド木とパッチ結果の差は re2c の版表示と `#line` 指示だけで、他の27ファイルは一致した。異常終了後の残存状態と両 CVE の全経路は未判定。
 
+二段差分を統合した[7.3.33実験候補](lab/candidates/patches/php-7.3.33.patch)を固定済み公式アーカイブから `lab/run-matrix.sh` でクリーン適用・ビルドした。結果は `pass`、`7.3.33 / apache2handler / SESSION_OK`、通常 multipart・進捗・`Serializable` 値維持。別の良性検査で通常 soft OOM と配列復号中の soft OOM を報告し、同じ Apache ワーカーが次要求を処理した。結果は `/private/tmp/php-backport-73-early-stack-results/`、ビルドした `libphp7.so` の SHA-256 は `7f6e3be92014a331be970df76481a4e54cece9f0b987b2ddfa7e776827941637`。両 CVE の全入口や他の拡張・保存形式は未判定で、配布用 `patches/` には移していない。
+
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
 同候補の `main/main.c` に、公式 8.2.35 の終了境界に合わせた post-RSHUTDOWN 後の `last_error` 再消去を追加した。元ソースへの fuzz なし dry-run、Linux/amd64 の増分コンパイル、上記の正常系再実行は通過。後処理診断の動的な経路確認と CVE-2026-109619 全入口の遮断は未実施。
