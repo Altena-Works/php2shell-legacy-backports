@@ -9,7 +9,26 @@
  }
  
  /*******************/
-@@ -1740,6 +1740,22 @@
+@@ -449,6 +449,18 @@
+ 	} cache_stat[ZEND_MM_NUM_BUCKETS+1];
+ #endif
+ };
++
++static zend_always_inline int zend_mm_segment_exceeds_limit(
++	zend_mm_heap *heap, size_t segment_size, size_t old_segment_size)
++{
++	size_t remaining;
++
++	if (heap->real_size < old_segment_size) {
++		return 1;
++	}
++	remaining = heap->real_size - old_segment_size;
++	return remaining > heap->limit || segment_size > heap->limit - remaining;
++}
+ 
+ #define ZEND_MM_SMALL_FREE_BUCKET(heap, index) \
+ 	(zend_mm_free_block*) ((char*)&heap->free_buckets[index * 2] + \
+@@ -1740,6 +1752,22 @@
  	}
  }
  
@@ -32,7 +51,7 @@
  static void zend_mm_safe_error(zend_mm_heap *heap,
  	const char *format,
  	size_t limit,
-@@ -1749,59 +1765,13 @@
+@@ -1749,59 +1777,13 @@
  #endif
  	size_t size)
  {
@@ -98,7 +117,25 @@
  }
  
  static zend_mm_free_block *zend_mm_search_large_block(zend_mm_heap *heap, size_t true_size)
-@@ -2472,7 +2442,7 @@
+@@ -1966,7 +1948,7 @@
+ 		}
+ 
+ 		if (segment_size < true_size ||
+-		    heap->real_size + segment_size > heap->limit) {
++		    zend_mm_segment_exceeds_limit(heap, segment_size, 0)) {
+ 			/* Memory limit overflow */
+ #if ZEND_MM_CACHE
+ 			zend_mm_free_cache(heap);
+@@ -2277,7 +2259,7 @@
+ 
+ 		segment_copy = (zend_mm_segment *) ((char *)mm_block - ZEND_MM_ALIGNED_SEGMENT_SIZE);
+ 		if (segment_size < true_size ||
+-		    heap->real_size + segment_size - segment_copy->size > heap->limit) {
++		    zend_mm_segment_exceeds_limit(heap, segment_size, segment_copy->size)) {
+ 			if (ZEND_MM_IS_FREE_BLOCK(next_block)) {
+ 				zend_mm_add_to_free_list(heap, (zend_mm_free_block *) next_block);
+ 			}
+@@ -2472,7 +2454,7 @@
  	       "rm"(offset));
  
  	if (UNEXPECTED(overflow)) {
@@ -107,7 +144,7 @@
  		return 0;
  	}
  	return res;
-@@ -2501,7 +2471,7 @@
+@@ -2501,7 +2483,7 @@
  
  #undef LP_SUFF
          if (UNEXPECTED(overflow)) {
@@ -116,7 +153,7 @@
                  return 0;
          }
          return res;
-@@ -2522,7 +2492,7 @@
+@@ -2522,7 +2504,7 @@
                 "1"(0));
  
          if (UNEXPECTED(overflow)) {
@@ -125,7 +162,7 @@
                  return 0;
          }
          return res;
-@@ -2542,7 +2512,7 @@
+@@ -2542,7 +2524,7 @@
                 "r"(offset));
  
          if (UNEXPECTED(overflow)) {
@@ -134,7 +171,7 @@
                  return 0;
          }
          return res;
-@@ -2555,7 +2525,7 @@
+@@ -2555,7 +2537,7 @@
  	zend_ulong64 res = (zend_ulong64)nmemb * (zend_ulong64)size + (zend_ulong64)offset;
  
  	if (UNEXPECTED(res > (zend_ulong64)0xFFFFFFFFL)) {
@@ -143,7 +180,7 @@
  		return 0;
  	}
  	return (size_t) res;
-@@ -2570,7 +2540,7 @@
+@@ -2570,7 +2552,7 @@
  	double _delta = (double)res - _d;
  
  	if (UNEXPECTED((_d + _delta ) != _d)) {
@@ -152,7 +189,7 @@
  		return 0;
  	}
  	return res;
-@@ -2582,7 +2552,7 @@
+@@ -2582,7 +2564,7 @@
  {
  	size_t str_size = safe_address(nmemb, size, offset);
  	if (UNEXPECTED(str_size > INT_MAX)) {

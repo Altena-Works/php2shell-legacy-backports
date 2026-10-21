@@ -6,13 +6,15 @@
 
 遅延OOMを機能維持で移植する際のVM境界を追加調査した。5.6.40の生成済み`Zend/zend_vm_execute.h`はCALL型で演算ごとに`execute_ex()`のループへ戻るが、`Zend/zend_vm_gen.php`はSWITCH型とGOTO型も生成でき、GOTO型の`ZEND_VM_CONTINUE()`は次のhandlerへ直接分岐する。したがってCALL型ループだけに保留OOM確認を加えても、全ビルドの安全地点を覆えない。`Zend/zend_vm_execute.skl`・生成器・生成済みVMを整合させる必要がある。また`ZEND_HANDLE_EXCEPTION`は`EG(opline_before_exception)`から演算位置を直ちに計算し、catch/finallyへ配送する。7.3の内部巻き戻し状態をそのまま移すことはできず、5.6の`zval *`例外とVMスタック後始末に合わせた独立実装が必要。これはソース調査段階であり、実装・検証結果ではない。
 
+生成器の具体的な配送境界を元ソースで確認した。`Zend/zend_vm_gen.php` の `DEFINES` は CALL の `ZEND_VM_CONTINUE()` を `return 0`、SWITCH を `zend_vm_continue` へ、GOTO を `OPLINE->handler` への直接分岐として出力する。`Zend/zend_vm_execute.skl` の共有ループにだけ検査を置くと GOTO の通常遷移は通らない。さらに `ZEND_VM_DISPATCH()` は各方式で別の直接配送経路を持ち、`RETURN` と `ENTER` も共有ループを迂回する。修正時は生成器と生成済みヘッダを同時に変更し、CALL・SWITCH・GOTO および旧 executor 有効時の各経路を照合する。`Zend/zend_vm_def.h` の `ZEND_HANDLE_EXCEPTION` は冒頭で `EG(opline_before_exception)` を無条件に逆参照し、その後 `catch` と `finally` に配送する。このため、保留 OOM を通常の例外として任意の次命令へ投げる案は採用しない。命令境界での安全な巻き戻しと、VM 外の POST・関数呼出し・主スクリプト境界を結合した実装が必要である。
+
 2026-10-22 の追加ソース照合で、遅延 OOM の最小結合単位を具体化した。`Zend/zend_alloc.c` の通常の上限判定は `_zend_mm_alloc_int()` と `_zend_mm_realloc_int()` にあり、現候補の `zend_set_memory_limit()` は soft limit だけを設定する。`heap->overflow` は初期化・リセットされるが、割当時の上限回避や保留エラー配送には使われていない。したがって、アロケータの即時終了だけを保留フラグへ置き換えると、エラー報告自体が同じ上限へ再突入し得る。独立した hard limit、保留情報の要求寿命、報告時の再入防止を同時に設ける必要がある。
 
 配送地点は生成済み CALL 型の `execute_ex()` ループだけでは足りない。`Zend/zend_vm_gen.php` は CALL の `ZEND_VM_CONTINUE()` を `return 0`、SWITCH を共有ラベルへの分岐、GOTO を次 handler への直接分岐として生成する。`ZEND_VM_RETURN()`・`ENTER()`・`LEAVE()` と `ZEND_VM_DISPATCH()` も別経路であり、生成テンプレート・生成器・生成済み VM を一組で確認する。VM 外では `main/main.c` の `php_request_startup()` が `zend_activate()` 後に `sapi_activate()` と `php_hash_environment()` を呼び、モジュール初期化前に POST を処理する。`main/SAPI.c` の読取・POST handler から戻った後、`Zend/zend_execute_API.c` の関数呼び出し後、`Zend/zend.c` の主スクリプト終了時にも保留状態を安全に届ける境界が要る。これは実装箇所の特定であり、遅延 OOM が実装・検証済みという意味ではない。
 
 PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から `zend_bailout()` を呼ぶ。Apache/mod_php はリクエスト開始が失敗しても終了処理へ進む。この組み合わせは [PHP 公式の説明](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)にある危険な状態遷移と一致する。
 
-`patches/php-5.6.40.patch`（SHA-256 `538e8b0543607bf15227697b6473938dbf4cfde8a0781ed604e308e8777c9899`）は、[PHP 公式の 7.4 向け最小バックポート](https://github.com/php/php-src/tree/PHP-7.4-CVE-2026-109618-109619)と同じ安全側の方法で、OOM と関連する割当サイズのオーバーフロー時にワーカーを即時終了させる。`zend_strtod.c` の `Balloc()` での割当失敗も含む。通常の割当経路は変更しない。OOM 時に PHP の通常のエラーハンドラやシャットダウン処理が動かなくなる挙動変更がある。最終候補は元ソースからの fuzz なし適用・クリーンビルドを通り、隔離 Linux/amd64・Apache/mod_php で通常セッション HTTP を確認した。制御された OOM 後のワーカー回復は未確認。
+`patches/php-5.6.40.patch`（SHA-256 `2eb8b5ba1cb8cc76516d91afc5d341c1144db3c9e1f14301b5722fe5fa124e6b`）は、[PHP 公式の 7.4 向け最小バックポート](https://github.com/php/php-src/tree/PHP-7.4-CVE-2026-109618-109619)と同じ安全側の方法で、OOM と関連する割当サイズのオーバーフロー時にワーカーを即時終了させる。`zend_strtod.c` の `Balloc()` での割当失敗も含む。加算の桁あふれで soft limit を通過しないよう、通常割当・再割当の上限判定を減算による比較へ変更した。OOM 時に PHP の通常のエラーハンドラやシャットダウン処理が動かなくなる挙動変更がある。元ソースへの fuzz なし適用を確認した。追加した上限判定のビルド・通常系確認は機能維持候補で実施し、配布用パッチ全体の再ビルドは未実施。制御された OOM 後のワーカー回復は未確認。
 
 2026-10-22 の追加照合では、元アーカイブのハッシュ確認、fuzz なしの適用、修正後の対象 7 ファイルの SHA-256 照合、既存の静的安全条件、Apache/mod_php の通常動作、良性 multipart 投稿を確認した。`checks/5.6.40.sh` は対象ファイルの一致を確認した後も、別経路が未調査のため終了コード 3 を保つ。これは公式最小バックポートで用いた**検証項目**へ近づけるものであり、同等の防御範囲を立証するものではない。
 
@@ -41,3 +43,5 @@ PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から 
 同候補では `session.upload_progress.cleanup=Off` のとき、進捗フィールドはあるがファイルがない通常の multipart 投稿でも END イベントへ進み、未作成の `progress->data` を更新していた。公式 8.2.35 の条件を 5.6 のポインタに合わせ、`progress->data` がある場合だけ最終更新する。修正前の Apache/mod_php モジュールでは接続断、修正後の増分ビルドでは投稿と既存セッションの維持を確認した。ファイルありの進捗記録も再確認した。
 
 通常の `PHP_RINIT_FUNCTION(basic)` より先に upload progress のセッション復号が走るため、前リクエストの `BG(unserialize)`・`BG(serialize)`・`BG(serialize_lock)` と URL リライターの状態を読まないよう、公式 8.2.35 と同じ要求開始境界で早期リセットを追加した。5.6 の `PHP_VAR_UNSERIALIZE_INIT` は `BG(unserialize).level` が非ゼロなら共有 `var_hash` を再利用するため、このリセットは旧版でも必要となる。fuzz なし適用、Linux/amd64 増分ビルド、3種類の保存形式で正常な multipart・進捗・セッション値、ファイルなし投稿を確認した。異常終了後の残存ポインタを動的に再現した検査ではない。
+
+機能維持候補（SHA-256 `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f`）にも割当上限の減算判定を追加した。元ソースへの fuzz なし dry-run、Linux/amd64・Apache/mod_php の増分ビルド、通常の multipart・進捗・セッション保持・参照値・3 保存形式・ファイルなし投稿を確認した。生成物 `libphp5.so` の SHA-256 は `95486dab9f2e1d47f38e297fed60ea106ff2b55034ad619c6de32cb9cb8b9828`。これは正常系の検証であり、遅延 OOM と 2 件の CVE の完全遮断を示さない。

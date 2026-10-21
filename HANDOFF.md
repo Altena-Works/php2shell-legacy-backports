@@ -8,7 +8,7 @@
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
-| 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
+| 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
 | 7.3.33 | 統合候補に遅延 OOM、JSON 中断、主要文字列関数の失敗可能割当、`explode` の OOM 保留時のループ中断と upload progress の各イベント・更新時の OOM 保留確認を実装。Linux/amd64・Apache/mod_php で直前の差分全体をクリーンビルドし、最新差分を増分ビルドして通常のセッション・multipart・進捗・JSON・文字列関数と、代表的な良性 OOM 後の同一ワーカー再利用を確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点と復号失敗経路、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
@@ -24,7 +24,7 @@
 
 `php_session_rfc1867_update()` と cleanup はセッション再読込や配列分離後の保留 OOM を検査し、保留中の進捗更新・保存を止めて更新フラグを解除する。フォーム・ファイルイベントの割当後は保留 OOM を確認して後続処理を止め、multipart 終了時も保留 OOM のまま進捗配列を分離・更新しない。元アーカイブへの fuzz なし実適用、Linux/amd64・Apache/mod_php の増分ビルド、通常の upload progress を確認した。大きな通常セッションを保存し小さい `memory_limit` で multipart を送る良性検査では、メモリ上限エラー、アプリスクリプト非実行、同一ワーカー再利用を確認した。OOM の厳密な発生地点と、全ての状態寿命・復号失敗経路は未確認。
 
-5.6.40 の機能維持候補は `/private/tmp/php-backport-56-early-candidate-results/` で正常系を確認した。現行の配布用緊急パッチは upload progress 停止による暫定緩和であり、機能維持候補や公式同等修正と混同しない。通常 soft OOM では `curl 52` とワーカー交代を確認しており、5.6.40 を完了扱いにしない。
+5.6.40 の機能維持候補は `/private/tmp/php-backport-56-early-candidate-results/` で正常系を確認した。候補パッチ SHA-256 は `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f`、増分ビルド後の `libphp5.so` は `95486dab9f2e1d47f38e297fed60ea106ff2b55034ad619c6de32cb9cb8b9828`。配布用緊急パッチ SHA-256 は `2eb8b5ba1cb8cc76516d91afc5d341c1144db3c9e1f14301b5722fe5fa124e6b`。両パッチの元ソースへの fuzz なし dry-run は通過したが、変更後の配布用パッチ全体の再ビルドは未実施。配布用は upload progress 停止による暫定緩和であり、機能維持候補や公式同等修正と混同しない。通常 soft OOM では `curl 52` とワーカー交代を確認しており、5.6.40 を完了扱いにしない。
 
 ## 次の作業
 
