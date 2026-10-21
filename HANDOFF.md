@@ -31,7 +31,7 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 
 5.6.40 の[追加候補](lab/candidates/README.md)には post-RSHUTDOWN 後の `last_error` 再消去を入れた。元アーカイブへの fuzz なし適用、隔離 Linux/amd64・Apache/mod_php のクリーンビルド、通常セッション・multipart と進捗停止は通過。最初に試した古いビルド木では進捗が有効だったため、その結果は候補検証に採用せず、新しい作業木でやり直した。後処理診断の動的確認と残る入口の網羅は未実施。
 
-5.6.40 の[機能維持候補](lab/candidates/README.md)は upload progress の早期更新中に専用の不完全クラス復号と `Serializable` の元ペイロード再保存を行う。元ソースへの fuzz なし適用と Linux/amd64・Apache/mod_php のクリーンビルド後、候補内の生成済み C をそのまま再コンパイルし、通常 multipart・進捗記録・セッション値維持を再確認した。公式修正との照合で multipart 開始前に前リクエストのセッション状態が残る入口を確認し、開始イベントでの初期化を追加した。変更した `session.c` の増分コンパイルと同じ正常系の再実行も通過。両 CVE の遮断と OOM 後の回復は未判定で、配布用パッチには昇格していない。
+5.6.40 の[機能維持候補](lab/candidates/README.md)は upload progress の早期更新中に専用の不完全クラス復号と `Serializable` の元ペイロード再保存を行う。multipart 開始時にセッション状態を初期化し、保存先の初期化・読取失敗時に進捗更新を止める条件を追加した。元ソースへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド後の増分コンパイル、通常 multipart・進捗記録・セッション値維持を確認した。無効な保存先では警告が記録され、通常のアップロードと同じワーカーの後続要求が成功した。両 CVE の遮断と OOM 後の回復は未判定で、配布用パッチには昇格していない。
 
 7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 

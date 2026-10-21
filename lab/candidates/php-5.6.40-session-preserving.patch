@@ -227,7 +227,73 @@
  }
  /* }}} */
  
-@@ -845,7 +846,9 @@
+@@ -468,28 +469,34 @@
+ }
+ /* }}} */
+ 
+-static void php_session_initialize(TSRMLS_D) /* {{{ */
++static int php_session_initialize(TSRMLS_D) /* {{{ */
+ {
+ 	char *val = NULL;
+ 	int vallen;
+ 
+ 	if (!PS(mod)) {
+-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "No storage module chosen - failed to initialize session");
+-		return;
++		php_error_docref(NULL TSRMLS_CC, PS(in_rfc1867_update) ? E_WARNING : E_ERROR, "No storage module chosen - failed to initialize session");
++		return FAILURE;
+ 	}
+ 
+ 	/* Open session handler first */
+ 	if (PS(mod)->s_open(&PS(mod_data), PS(save_path), PS(session_name) TSRMLS_CC) == FAILURE) {
+-		php_error_docref(NULL TSRMLS_CC, E_ERROR, "Failed to initialize storage module: %s (path: %s)", PS(mod)->s_name, PS(save_path));
+-		return;
++		if (PS(in_rfc1867_update)) {
++			php_rshutdown_session_globals(TSRMLS_C);
++		}
++		php_error_docref(NULL TSRMLS_CC, PS(in_rfc1867_update) ? E_WARNING : E_ERROR, "Failed to initialize storage module: %s (path: %s)", PS(mod)->s_name, PS(save_path));
++		return FAILURE;
+ 	}
+ 
+ 	/* If there is no ID, use session module to create one */
+ 	if (!PS(id)) {
+ 		PS(id) = PS(mod)->s_create_sid(&PS(mod_data), NULL TSRMLS_CC);
+ 		if (!PS(id)) {
+-			php_error_docref(NULL TSRMLS_CC, E_ERROR, "Failed to create session ID: %s (path: %s)", PS(mod)->s_name, PS(save_path));
+-			return;
++			if (PS(in_rfc1867_update)) {
++				php_rshutdown_session_globals(TSRMLS_C);
++			}
++			php_error_docref(NULL TSRMLS_CC, PS(in_rfc1867_update) ? E_WARNING : E_ERROR, "Failed to create session ID: %s (path: %s)", PS(mod)->s_name, PS(save_path));
++			return FAILURE;
+ 		}
+ 		if (PS(use_cookies)) {
+ 			PS(send_cookie) = 1;
+@@ -507,6 +514,15 @@
+ 	if (PS(mod)->s_read(&PS(mod_data), PS(id), &val, &vallen TSRMLS_CC) == FAILURE) {
+ 		/* Some broken save handler implementation returns FAILURE for non-existent session ID */
+ 		/* It's better to raise error for this, but disabled error for better compatibility */
++		if (PS(in_rfc1867_update)) {
++			if (val) {
++				str_efree(val);
++			}
++			php_rshutdown_session_globals(TSRMLS_C);
++			PS(session_status) = php_session_none;
++			php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to read session data: %s (path: %s)", PS(mod)->s_name, PS(save_path));
++			return FAILURE;
++		}
+ 		/*
+ 		php_error_docref(NULL TSRMLS_CC, E_NOTICE, "Failed to read session data: %s (path: %s)", PS(mod)->s_name, PS(save_path));
+ 		*/
+@@ -527,6 +543,7 @@
+ 		}
+ 		PS(send_cookie) = 0;
+ 	}
++	return SUCCESS;
+ }
+ /* }}} */
+ 
+@@ -845,7 +862,9 @@
  	php_serialize_data_t var_hash;
  
  	PHP_VAR_SERIALIZE_INIT(var_hash);
@@ -237,7 +303,7 @@
  	PHP_VAR_SERIALIZE_DESTROY(var_hash);
  	if (newlen) {
  		*newlen = buf.len;
-@@ -863,6 +866,7 @@
+@@ -863,6 +882,7 @@
  	php_unserialize_data_t var_hash;
  
  	PHP_VAR_UNSERIALIZE_INIT(var_hash);
@@ -245,7 +311,7 @@
  	ALLOC_INIT_ZVAL(session_vars);
  	if (php_var_unserialize(&session_vars, &val, endptr, &var_hash TSRMLS_CC)) {
  		var_push_dtor(&var_hash, &session_vars);
-@@ -892,6 +896,7 @@
+@@ -892,6 +912,7 @@
  	PS_ENCODE_VARS;
  
  	PHP_VAR_SERIALIZE_INIT(var_hash);
@@ -253,7 +319,7 @@
  
  	PS_ENCODE_LOOP(
  			if (key_length > PS_BIN_MAX) continue;
-@@ -910,6 +915,7 @@
+@@ -910,6 +931,7 @@
  	smart_str_0(&buf);
  	*newstr = buf.c;
  	PHP_VAR_SERIALIZE_DESTROY(var_hash);
@@ -261,7 +327,7 @@
  
  	return SUCCESS;
  }
-@@ -927,6 +933,7 @@
+@@ -927,6 +949,7 @@
  	int skip = 0;
  
  	PHP_VAR_UNSERIALIZE_INIT(var_hash);
@@ -269,7 +335,7 @@
  
  	for (p = val; p < endptr; ) {
  		zval **tmp;
-@@ -984,11 +991,13 @@
+@@ -984,11 +1007,13 @@
  	PS_ENCODE_VARS;
  
  	PHP_VAR_SERIALIZE_INIT(var_hash);
@@ -283,7 +349,7 @@
  				smart_str_free(&buf);
  				return FAILURE;
  			}
-@@ -1008,6 +1017,7 @@
+@@ -1008,6 +1033,7 @@
  	*newstr = buf.c;
  
  	PHP_VAR_SERIALIZE_DESTROY(var_hash);
@@ -291,7 +357,7 @@
  	return SUCCESS;
  }
  /* }}} */
-@@ -1024,6 +1034,7 @@
+@@ -1024,6 +1050,7 @@
  	int skip = 0;
  
  	PHP_VAR_UNSERIALIZE_INIT(var_hash);
@@ -299,15 +365,19 @@
  
  	p = val;
  
-@@ -2642,6 +2653,7 @@
+@@ -2642,23 +2669,31 @@
  		progress->next_update = Z_LVAL_P(progress->post_bytes_processed) + progress->update_step;
  	}
  
+-	php_session_initialize(TSRMLS_C);
+-	PS(session_status) = php_session_active;
 +	PS(in_rfc1867_update) = 1;
- 	php_session_initialize(TSRMLS_C);
- 	PS(session_status) = php_session_active;
++	if (php_session_initialize(TSRMLS_C) == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
  	IF_SESSION_VARS() {
-@@ -2649,16 +2661,19 @@
+ 		progress->cancel_upload |= php_check_cancel_upload(progress TSRMLS_CC);
  		ZEND_SET_SYMBOL_WITH_LENGTH(Z_ARRVAL_P(PS(http_session_vars)), progress->key.c, progress->key.len+1, progress->data, 2, 0);
  	}
  	php_session_flush(TSRMLS_C);
@@ -316,9 +386,13 @@
  
  static void php_session_rfc1867_cleanup(php_session_rfc1867_progress *progress TSRMLS_DC) /* {{{ */
  {
+-	php_session_initialize(TSRMLS_C);
+-	PS(session_status) = php_session_active;
 +	PS(in_rfc1867_update) = 1;
- 	php_session_initialize(TSRMLS_C);
- 	PS(session_status) = php_session_active;
++	if (php_session_initialize(TSRMLS_C) == FAILURE || PS(session_status) != php_session_active) {
++		PS(in_rfc1867_update) = 0;
++		return;
++	}
  	IF_SESSION_VARS() {
  		zend_hash_del(Z_ARRVAL_P(PS(http_session_vars)), progress->key.c, progress->key.len+1);
  	}
@@ -327,7 +401,7 @@
  } /* }}} */
  
  static int php_session_rfc1867_callback(unsigned int event, void *event_data, void **extra TSRMLS_DC) /* {{{ */
-@@ -2669,7 +2684,7 @@
+@@ -2669,7 +2704,7 @@
  	if (php_session_rfc1867_orig_callback) {
  		retval = php_session_rfc1867_orig_callback(event, event_data, extra TSRMLS_CC);
  	}
@@ -336,7 +410,7 @@
  		return retval;
  	}
  
-@@ -2678,6 +2693,7 @@
+@@ -2678,6 +2713,7 @@
  	switch(event) {
  		case MULTIPART_EVENT_START: {
  			multipart_event_start *data = (multipart_event_start *) event_data;
@@ -344,7 +418,7 @@
  			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
  			progress->content_length = data->content_length;
  			progress->sname_len  = strlen(PS(session_name));
-@@ -2824,6 +2840,7 @@
+@@ -2824,6 +2860,7 @@
  					Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
  					php_session_rfc1867_update(progress, 1 TSRMLS_CC);
  				}
