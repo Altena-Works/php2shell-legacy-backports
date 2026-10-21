@@ -7,6 +7,7 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$source_tree:/src:ro" \
     -v "$script_dir/normal-repeat-limit.php:/var/www/html/normal-repeat-limit.php:ro" \
+    -v "$script_dir/normal-pad-limit.php:/var/www/html/normal-pad-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -37,6 +38,9 @@ done
 normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-repeat-limit.php)
 [[ $normal == REPEAT_OK ]] || { printf 'normal str_repeat failed: %s\n' "$normal" >&2; exit 1; }
+normal_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-pad-limit.php)
+[[ $normal_pad == PAD_OK ]] || { printf 'normal str_pad failed: %s\n' "$normal_pad" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -70,4 +74,16 @@ after_aggregate=$(podman exec "$container_id" curl -fsS --max-time 5 \
 [[ ${pre%%$'\n'*} == ${after_aggregate%%$'\n'*} ]] || {
     printf 'Apache worker changed after aggregate soft OOM\n' >&2; exit 1;
 }
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED WORKER_REUSED
+
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/pad-limit.out 'http://127.0.0.1/normal-pad-limit.php?limit=1' >/dev/null
+padded=$(podman exec "$container_id" tail -c 500 /tmp/pad-limit.out)
+after_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $padded == *'Allowed memory size of 8388608 bytes exhausted'* && $padded != *RETURNED* ]] || {
+    printf 'expected pad soft OOM and request abort missing: %s\n' "$padded" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_pad%%$'\n'*} ]] || {
+    printf 'Apache worker changed after pad soft OOM\n' >&2; exit 1;
+}
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED WORKER_REUSED
