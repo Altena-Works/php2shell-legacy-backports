@@ -10,6 +10,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-pad-limit.php:/var/www/html/normal-pad-limit.php:ro" \
     -v "$script_dir/normal-implode-limit.php:/var/www/html/normal-implode-limit.php:ro" \
     -v "$script_dir/normal-chunk-limit.php:/var/www/html/normal-chunk-limit.php:ro" \
+    -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -49,6 +50,9 @@ normal_implode=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-chunk-limit.php)
 [[ $normal_chunk == CHUNK_OK ]] || { printf 'normal chunk_split failed: %s\n' "$normal_chunk" >&2; exit 1; }
+normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-wordwrap-limit.php)
+[[ $normal_wordwrap == WORDWRAP_OK ]] || { printf 'normal wordwrap failed: %s\n' "$normal_wordwrap" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -118,4 +122,15 @@ after_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
 [[ ${pre%%$'\n'*} == ${after_chunk%%$'\n'*} ]] || {
     printf 'Apache worker changed after chunk_split soft OOM\n' >&2; exit 1;
 }
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORKER_REUSED
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/wordwrap-limit.out 'http://127.0.0.1/normal-wordwrap-limit.php?limit=1' >/dev/null
+wrapped=$(podman exec "$container_id" tail -c 500 /tmp/wordwrap-limit.out)
+after_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $wrapped == *'Allowed memory size of 8388608 bytes exhausted'* && $wrapped != *RETURNED* ]] || {
+    printf 'expected wordwrap soft OOM and request abort missing: %s\n' "$wrapped" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_wordwrap%%$'\n'*} ]] || {
+    printf 'Apache worker changed after wordwrap soft OOM\n' >&2; exit 1;
+}
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED WORKER_REUSED
