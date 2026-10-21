@@ -39,3 +39,5 @@ PHP 5.6.40 の `Zend/zend_alloc.c` は OOM 時に `zend_mm_safe_error()` から 
 5.6 の `ZEND_SET_SYMBOL_WITH_LENGTH` は既存スロットが参照値なら、`progress->data` の値を既存 `zval` へ移して元の本体を `FREE_ZVAL` する。進捗構造体のポインタをそのままにすると、次の更新で解放済み本体を参照する。機能維持候補では参照先の `zval` を挿入前に保持し、更新後に `progress->data` を付け替える。Linux/amd64・Apache/mod_php で通常の参照値を持つセッションを作り、小さな multipart 投稿後に進捗キーと別キーの参照関係、進捗の記録を確認した。攻撃コードは使っていない。他のセッション形式・例外経路の網羅は未了。
 
 同候補では `session.upload_progress.cleanup=Off` のとき、進捗フィールドはあるがファイルがない通常の multipart 投稿でも END イベントへ進み、未作成の `progress->data` を更新していた。公式 8.2.35 の条件を 5.6 のポインタに合わせ、`progress->data` がある場合だけ最終更新する。修正前の Apache/mod_php モジュールでは接続断、修正後の増分ビルドでは投稿と既存セッションの維持を確認した。ファイルありの進捗記録も再確認した。
+
+通常の `PHP_RINIT_FUNCTION(basic)` より先に upload progress のセッション復号が走るため、前リクエストの `BG(unserialize)`・`BG(serialize)`・`BG(serialize_lock)` と URL リライターの状態を読まないよう、公式 8.2.35 と同じ要求開始境界で早期リセットを追加した。5.6 の `PHP_VAR_UNSERIALIZE_INIT` は `BG(unserialize).level` が非ゼロなら共有 `var_hash` を再利用するため、このリセットは旧版でも必要となる。fuzz なし適用、Linux/amd64 増分ビルド、3種類の保存形式で正常な multipart・進捗・セッション値、ファイルなし投稿を確認した。異常終了後の残存ポインタを動的に再現した検査ではない。

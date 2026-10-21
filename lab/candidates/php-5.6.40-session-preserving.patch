@@ -431,7 +431,10 @@
  			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
  			progress->content_length = data->content_length;
  			progress->sname_len  = strlen(PS(session_name));
-@@ -2823,3 +2871,5 @@
+@@ -2820,10 +2868,13 @@
+ 				if (PS(rfc1867_cleanup)) {
+ 					php_session_rfc1867_cleanup(progress TSRMLS_CC);
+ 				} else {
 -					add_assoc_bool_ex(progress->data, "done", sizeof("done"), 1);
 -					Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
 -					php_session_rfc1867_update(progress, 1 TSRMLS_CC);
@@ -440,8 +443,11 @@
 +						Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
 +						php_session_rfc1867_update(progress, 1 TSRMLS_CC);
 +					}
-@@ -2826,0 +2877 @@
+ 				}
 +				zend_delete_global_variable("_SESSION", sizeof("_SESSION")-1 TSRMLS_CC);
+ 				php_rshutdown_session_globals(TSRMLS_C);
+ 			}
+ 
 --- a/ext/session/php_session.h
 +++ b/ext/session/php_session.h
 @@ -172,6 +172,7 @@
@@ -454,32 +460,27 @@
  	smart_str rfc1867_prefix;  /* session.upload_progress.prefix */
 --- a/ext/standard/basic_functions.c
 +++ b/ext/standard/basic_functions.c
-@@ -3448,6 +3448,7 @@
- 	BG(user_tick_functions) = NULL;
- 	BG(user_filter_map) = NULL;
- 	BG(serialize_lock) = 0;
+@@ -3450,0 +3451 @@
 +	BG(serialize_incomplete_classes_only) = 0;
- 
- 	memset(&BG(serialize), 0, sizeof(BG(serialize)));
- 	memset(&BG(unserialize), 0, sizeof(BG(unserialize)));
-@@ -3716,6 +3717,7 @@
- 	memset(BG(strtok_table), 0, 256);
- 
- 	BG(serialize_lock) = 0;
+@@ -3712,0 +3714,10 @@
++
++PHPAPI void php_basic_early_rinit(TSRMLS_D)
++{
++	/* Upload progress can (un)serialize before the module RINIT. */
++	BG(serialize_lock) = 0;
 +	BG(serialize_incomplete_classes_only) = 0;
- 	memset(&BG(serialize), 0, sizeof(BG(serialize)));
- 	memset(&BG(unserialize), 0, sizeof(BG(unserialize)));
- 
++	memset(&BG(serialize), 0, sizeof(BG(serialize)));
++	memset(&BG(unserialize), 0, sizeof(BG(unserialize)));
++	php_url_scanner_early_rinit(TSRMLS_C);
++}
+@@ -3718,0 +3730 @@
++	BG(serialize_incomplete_classes_only) = 0;
 --- a/ext/standard/basic_functions.h
 +++ b/ext/standard/basic_functions.h
-@@ -205,6 +205,7 @@
- 	/* var.c */
- 	zend_class_entry *incomplete_class;
- 	unsigned serialize_lock; /* whether to use the locally supplied var_hash instead (__sleep/__wakeup) */
+@@ -129,0 +130 @@
++PHPAPI void php_basic_early_rinit(TSRMLS_D);
+@@ -207,0 +209 @@
 +	zend_bool serialize_incomplete_classes_only;
- 	struct {
- 		void *var_hash;
- 		unsigned level;
 --- a/ext/standard/php_incomplete_class.h
 +++ b/ext/standard/php_incomplete_class.h
 @@ -52,6 +52,7 @@
@@ -712,6 +713,23 @@
  
  		if (ret && incomplete_class) {
  			php_store_class_name(*rval, class_name, len2);
+--- a/ext/standard/url_scanner_ex.c
++++ b/ext/standard/url_scanner_ex.c
+@@ -1048 +1048 @@
+-PHP_RINIT_FUNCTION(url_scanner)
++PHPAPI void php_url_scanner_early_rinit(TSRMLS_D)
+@@ -1049,0 +1050 @@
++	/* add_var() reinitializes the request state before using it. */
+@@ -1050,0 +1052,5 @@
++}
++
++PHP_RINIT_FUNCTION(url_scanner)
++{
++	php_url_scanner_early_rinit(TSRMLS_C);
+--- a/ext/standard/url_scanner_ex.h
++++ b/ext/standard/url_scanner_ex.h
+@@ -28,0 +29 @@
++PHPAPI void php_url_scanner_early_rinit(TSRMLS_D);
 --- a/main/SAPI.c
 +++ b/main/SAPI.c
 @@ -528,18 +528,23 @@
@@ -748,10 +766,16 @@
  	SG(global_request_time) = 0;
 --- a/main/main.c
 +++ b/main/main.c
-@@ -1746,6 +1746,18 @@
- }
- /* }}} */
- 
+@@ -61,0 +62 @@
++#include "ext/standard/basic_functions.h"
+@@ -1647,0 +1649 @@
++		php_basic_early_rinit(TSRMLS_C);
+@@ -1709,0 +1712 @@
++	php_basic_early_rinit(TSRMLS_C);
+@@ -1741,0 +1745 @@
++	php_basic_early_rinit(TSRMLS_C);
+@@ -1747,0 +1752,12 @@
++
 +static void php_clear_last_error(TSRMLS_D)
 +{
 +	if (PG(last_error_message)) {
@@ -763,44 +787,15 @@
 +		PG(last_error_file) = NULL;
 +	}
 +}
-+
- /* {{{ php_request_shutdown_for_exec
-  */
- void php_request_shutdown_for_exec(void *dummy)
-@@ -1784,6 +1796,7 @@
- 		for (i = 0; i < NUM_TRACK_VARS; i++) {
- 			if (PG(http_globals)[i]) {
- 				zval_ptr_dtor(&PG(http_globals)[i]);
+@@ -1786,0 +1803 @@
 +				PG(http_globals)[i] = NULL;
- 			}
- 		}
- 	} zend_end_try();
-@@ -1798,6 +1811,7 @@
- 		php_shutdown_stream_hashes(TSRMLS_C);
- 	} zend_end_try();
- 
+@@ -1800,0 +1818 @@
 +	php_clear_last_error(TSRMLS_C);
- 	zend_try {
- 		shutdown_memory_manager(CG(unclean_shutdown), 0 TSRMLS_CC);
- 	} zend_end_try();
-@@ -1809,6 +1823,7 @@
- 		zend_signal_deactivate(TSRMLS_C);
- 	} zend_end_try();
- #endif
+@@ -1811,0 +1830 @@
 +	PG(modules_activated) = 0;
- }
- 
- /* }}} */
-@@ -1880,19 +1895,13 @@
- 		for (i=0; i<NUM_TRACK_VARS; i++) {
- 			if (PG(http_globals)[i]) {
- 				zval_ptr_dtor(&PG(http_globals)[i]);
+@@ -1882,0 +1902 @@
 +				PG(http_globals)[i] = NULL;
- 			}
- 		}
- 	} zend_end_try();
- 
- 	/* 7.5 free last error information and temp dir */
+@@ -1888,8 +1908 @@
 -	if (PG(last_error_message)) {
 -		free(PG(last_error_message));
 -		PG(last_error_message) = NULL;
@@ -810,23 +805,8 @@
 -		PG(last_error_file) = NULL;
 -	}
 +	php_clear_last_error(TSRMLS_C);
- 	php_shutdown_temporary_directory();
- 
- 	/* 7. Shutdown scanner/executor/compiler and restore ini entries */
-@@ -1917,6 +1926,8 @@
- 	} zend_end_try();
- 
- 	/* 11. Free Willy (here be crashes) */
+@@ -1919,0 +1933,2 @@
 +	/* Post-RSHUTDOWN diagnostics may recreate request-owned error strings. */
 +	php_clear_last_error(TSRMLS_C);
- 	zend_try {
- 		shutdown_memory_manager(CG(unclean_shutdown) || !report_memleaks, 0 TSRMLS_CC);
- 	} zend_end_try();
-@@ -1937,6 +1948,7 @@
- #ifdef HAVE_DTRACE
- 	DTRACE_REQUEST_SHUTDOWN(SAFE_FILENAME(SG(request_info).path_translated), SAFE_FILENAME(SG(request_info).request_uri), (char *)SAFE_FILENAME(SG(request_info).request_method));
- #endif /* HAVE_DTRACE */
+@@ -1939,0 +1955 @@
 +	PG(modules_activated) = 0;
- }
- /* }}} */
- 
