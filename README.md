@@ -1,82 +1,49 @@
-# PHP 旧版向け緊急バックポート検証
+# PHP 旧版向け緊急バックポート
 
-PHP の [CVE-2026-109618](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w) と [CVE-2026-109619](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp) に対する旧版の修正候補を、隔離した Linux x86_64・Apache/mod_php 環境でビルドして確認するためのリポジトリです。**このリポジトリのパッチは本番配布物ではなく、両 CVE の完全な遮断も確認できていません。** 本番環境では [PHP 公式の修正版](https://www.php.net/archive/2026.php)または配布元が両件を修正した版への更新を優先してください。
+[PHP 公式の CVE-2026-109618](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w) と [CVE-2026-109619](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp) の修正を、公式の修正版リリースがない旧版へ移すためのパッチです。公式の最小バックポートを使える版ではその差分を採用し、それ以外は版ごとに移植しています。**このリポジトリは PHP 公式の配布物ではありません。両件の完全な遮断が未確認の版を含みます。**
 
-## 対象版と現在の範囲
+## パッチと制限
 
-| PHP | パッチ | ローカル検証の範囲 |
-| --- | --- | --- |
-| 5.6.40 | `patches/php-5.6.40.patch` | 厳密適用、クリーンビルド、Apache/mod_php、通常セッション・multipart、upload progress 停止。別の状態経路は未検証 |
-| 7.3.29 / 7.3.33 | 版別の `patches/php-<版>.patch` | 厳密適用、ビルド、Apache/mod_php、通常セッション・multipart、ソース検査 |
-| 7.4.33 | `patches/php-7.4.33.patch` | 公式の最小バックポートと差分一致。ビルド、Apache/mod_php、通常セッション・multipart |
-| 8.0.30 / 8.1.34 | 版別の `patches/php-<版>.patch` | 公式の最小バックポートを厳密適用、ソース検査。実行確認は進行中 |
-| 5.4.45 / 5.5.38 / 7.0.33 / 7.1.33 / 7.2.34 | なし | ソース取得のみ。版固有パッチと修正後の実行確認は未完了 |
+| PHP | パッチの状態 |
+| --- | --- |
+| 5.6.40 | 緊急候補。Apache/mod_php で通常のセッション・multipart を確認。CVE-2026-109619 の別経路は未検証 |
+| 7.3.29 / 7.3.33 | 7.4 向け公式最小バックポートを移植。Apache/mod_php の通常動作を確認。完全遮断は未検証 |
+| 7.4.33 | 公式最小バックポートと差分一致。Apache/mod_php の通常動作を確認 |
+| 8.0.30 / 8.1.34 | 公式最小バックポートを適用。Apache/mod_php のビルド・実行確認中 |
+| 5.4.45 / 5.5.38 / 7.0.33 / 7.1.33 / 7.2.34 | パッチ未完成。導入対象外 |
 
-5.6.40、7.3 系、7.4.33、8.0.30、8.1.34 の緊急候補は `session.upload_progress` を停止します。進捗表示に依存するアプリでは動作が変わります。5.6.40 の停止は緊急対応として許可された範囲です。版別の根拠と限界は [設計書](BACKPORT-DESIGN.md)、運用側の暫定策は [防御手順](DEFENSE-GUIDE.md)を参照してください。
+パッチは `patches/php-<版>.patch` にあります。**適用すると `session.upload_progress` が停止します。** 進捗表示を使うアプリでは影響を確認してください。5.6.40 の停止は緊急対応として許可された範囲です。版別の根拠は [設計書](BACKPORT-DESIGN.md)、暫定緩和と監視は [防御手順](DEFENSE-GUIDE.md)にあります。
 
-## 1. 検証用 PHP を用意する
+## 導入手順
 
-以下は **検証用コンテナ内** に各版の Apache モジュールをソースから組み込む手順です。本番ホストへのインストールやサービスの切り替えは行いません。作業場所はこのリポジトリのルート、シェルは Bash を想定します。Podman、`curl`、`shasum`、`awk` が必要です。macOS では Podman VM を先に起動します。VM がなければ、先に `podman machine init --cpus 4 --memory 4096 --disk-size 10 php-backport-lab` で作成します。Linux 上の Podman では VM 起動は不要です。
-
-```bash
-# macOS で既存の検証 VM を使う場合
-podman machine start php-backport-lab
-
-# 使う版に対応するビルダーだけ作る。5.6 用は古い Debian のパッケージを使うため検証専用。
-# 5.x 用
-podman build --platform linux/amd64 -t localhost/php-backport-build:5.6 -f lab/Containerfile.php56 .
-# 7.x 用
-podman build --platform linux/amd64 -t localhost/php-backport-build:7.4 -f lab/Containerfile.php74 .
-# 8.x 用
-podman build --platform linux/amd64 -t localhost/php-backport-build:8.1 -f lab/Containerfile.php81 .
-```
-
-必要な版だけを PHP の[旧版アーカイブ](https://museum.php.net/)から取得します。次の `versions` を変えるだけで、単一版にも複数版にも使えます。ハッシュが [固定一覧](lab/source-hashes.tsv)と異なれば、そのアーカイブは使わずに取得元を確認してください。
+1. 稼働中の PHP の正確な版、配布元、SAPI、ビルド設定を確認し、現行のパッケージまたは Apache モジュールを退避します。対象版と一致する元ソースだけを使います。
+2. このリポジトリのルートで Bash を使い、次の例の `version` を上表のパッチがある版に変更して実行します。元ソースは [PHP 旧版アーカイブ](https://museum.php.net/)から取得し、保存済みの SHA-256 と照合します。
 
 ```bash
-source_dir="$HOME/php-backport-lab/sources"
-results_dir="$HOME/php-backport-lab/results"
-mkdir -p "$source_dir" "$results_dir"
-versions=(5.6.40 7.3.29 7.3.33 7.4.33 8.0.30 8.1.34)
+( set -e
+repo_root="$PWD"
+version=7.3.29
+major="${version%%.*}"
+archive="php-$version.tar.gz"
+work_dir="$HOME/php-backport-apply/$version"
+mkdir -p "$work_dir"
+cd "$work_dir"
 
-for version in "${versions[@]}"; do
-  archive="$source_dir/php-$version.tar.gz"
-  if [[ ! -f "$archive" ]]; then
-    major="${version%%.*}"
-    curl -fL --retry 3 "https://museum.php.net/php$major/php-$version.tar.gz" -o "$archive"
-  fi
-  expected="$(awk -F '\t' -v v="$version" '$1 == v { print $2 }' lab/source-hashes.tsv)"
-  actual="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
-  [[ -n "$expected" && "$actual" == "$expected" ]] || {
-    printf 'SHA-256 mismatch: %s\n' "$archive" >&2
-    exit 1
-  }
-done
+curl -fL --retry 3 "https://museum.php.net/php$major/$archive" -o "$archive"
+expected="$(awk -F '\t' -v v="$version" '$1 == v { print $2 }' "$repo_root/lab/source-hashes.tsv")"
+actual="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
+[[ -n "$expected" && "$actual" == "$expected" ]] || { echo 'source hash mismatch' >&2; exit 1; }
+
+tar -xzf "$archive"
+cd "php-$version"
+patch --dry-run --fuzz=0 --batch -p1 < "$repo_root/patches/php-$version.patch"
+patch --fuzz=0 --batch -p1 < "$repo_root/patches/php-$version.patch"
+)
 ```
 
-この照合は、この作業で固定した配布アーカイブとの一致確認です。独立した署名検証の代わりにはなりません。
+3. 配布元の既存ビルド手順と同じ設定・拡張で再ビルドし、隔離した環境で PHP 版、Apache が読み込むモジュール、セッション、通常の multipart を確認します。Linux x86_64・Apache/mod_php の並列検証手順は [lab/README.md](lab/README.md)にあります。元ソースのハッシュ照合は独立した署名検証の代わりにはなりません。
+4. 検証した成果物を本番の配布手順で導入し、全ワーカーを再起動します。実際の HTTP 応答から版と SAPI を確認し、問題があれば退避した成果物へ戻します。配布元独自の差分、PHP-FPM、LSAPI は別途検証が必要です。
 
-## 2. 指定版へパッチを適用して起動確認する
+## ライセンスと無保証
 
-`--versions` にカンマ区切りで版を指定します。4 CPU・4 GiB の検証 VM では `--jobs 2` を使います。各版は別の作業木を使い、パッチを fuzz なしで適用してからビルドします。Apache は外部ポートを開かず、コンテナ内の loopback から通常の HTTP 応答とセッション読み書きを確認します。
-
-```bash
-# 例: PHP 7.3.29 だけ
-lab/run-matrix.sh --mode patch --versions 7.3.29 --jobs 1 \
-  --source-dir "$source_dir" --results-dir "$results_dir" \
-  --patch-dir "$PWD/patches" --check-dir "$PWD/checks"
-
-# 例: パッチがある版を並列確認
-lab/run-matrix.sh --mode patch \
-  --versions 5.6.40,7.3.29,7.3.33,7.4.33,8.0.30,8.1.34 --jobs 2 \
-  --source-dir "$source_dir" --results-dir "$results_dir" \
-  --patch-dir "$PWD/patches" --check-dir "$PWD/checks"
-```
-
-結果は `$results_dir/patch/<版>/` の `status`、`runtime.txt`、`defense-check.log`、ビルドログに残ります。`pass` はパッチ適用、ビルド、通常 HTTP、版別のソース検査を通った意味であり、悪用不能性の証明ではありません。**5.6.40 の `fail (3)` は意図的な未完了判定**です。`runtime.txt` の正常応答と `defense-check.log` の未検証経路を別々に確認してください。検証環境と判定の詳細は [lab/README.md](lab/README.md)に記録しています。
-
-パッチを変更したときは、同じ作業木に重ねず、新しい `--results-dir` を指定してください。パッチのない版を `--mode patch` に含めると、その版は失敗します。修正前の動作だけを確認する場合は `--mode baseline` を指定します。
-
-## 本番環境への反映前に
-
-アプリが使う拡張、SAPI、セッション設定、upload progress、multipart の入力制限を確認し、対象 OS と実際の PHP ビルドで別途検証してください。この検証環境は arm64 ホスト上で amd64 を変換実行しており、ネイティブ x86_64 の競合タイミングやヒープ配置を再現する保証はありません。PHP-FPM、LSAPI、独自の配布元パッチについても、この結果は適用できません。暫定隔離、ログ監視、更新後のワーカー入れ替えは [防御手順](DEFENSE-GUIDE.md)に従ってください。
+リポジトリの内容は [PHP License 3.01](LICENSE)で提供します。旧版ソースに付属する著作権表示とライセンスの原文は [5.6](licenses/PHP-5.6.40-LICENSE)・[7.3](licenses/PHP-7.3-LICENSE)についても保持しています。ライセンスの無保証・責任制限が適用されます。導入による不具合や損害を保証しません。

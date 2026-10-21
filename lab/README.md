@@ -1,19 +1,34 @@
-# 旧版 PHP の並列検証環境
+# Linux x86_64・Apache/mod_php 検証ラボ
 
-`run-matrix.sh` は候補版をまとめて処理する。初期値は 5.4.45、5.5.38、5.6.40、7.0.33、7.1.33、7.2.34、7.3.29、7.3.33、7.4.33、8.0.30、8.1.34。`--jobs` が同時実行数で、十分な資源があれば `--jobs 11` で全版を同時に処理できる。4 CPU・4 GiB の検証 VM では初期値の 2 を使う。各版を独立したコンテナで処理し、外部ポートを公開しない。`--network none` で起動し、同じコンテナのループバックへ通常の HTTP リクエストを送る。
+このラボは各版のソースを別の作業木で修正し、`linux/amd64` コンテナ内で Apache モジュールをビルドします。Web ポートは公開せず、コンテナ内の loopback から通常の HTTP とセッションを確認します。macOS では Podman VM を起動してください。ARM ホスト上の amd64 変換実行はネイティブ x86_64 と同じヒープ配置や競合タイミングを保証しません。
+
+## 準備
+
+リポジトリのルートで、使う版に応じたビルダーを作ります。PHP 5.x 用は古い Debian のパッケージを使うため、このラボだけに使ってください。
 
 ```bash
-lab/run-matrix.sh --mode baseline --versions 5.6.40,7.3.29,7.4.33 --jobs 2
-lab/run-matrix.sh --mode patch --patch-dir /absolute/path/to/patches \
-  --check-dir /absolute/path/to/checks --jobs 2
+podman build --platform linux/amd64 -t localhost/php-backport-build:5.6 -f lab/Containerfile.php56 .
+podman build --platform linux/amd64 -t localhost/php-backport-build:7.4 -f lab/Containerfile.php74 .
+podman build --platform linux/amd64 -t localhost/php-backport-build:8.1 -f lab/Containerfile.php81 .
 ```
 
-元ソースは既定で `/private/tmp/php-backport-sources/php-<version>.tar.gz` を使う。`--source-dir` で変更できる。アーカイブの SHA-256 が `source-hashes.tsv` と一致しない場合は中止する。この一覧は作業中に取得した配布物を固定するための値であり、独立した署名検証の代わりではない。必要なビルダーイメージは `Containerfile.php56`、`Containerfile.php74`、`Containerfile.php81` から事前に構築する。
+ソースは [PHP 旧版アーカイブ](https://museum.php.net/)から `php-<版>.tar.gz` を取得します。例えば 7.3.29 は `https://museum.php.net/php7/php-7.3.29.tar.gz` です。`lab/source-hashes.tsv` は取得済みアーカイブの SHA-256 を固定しており、スクリプトは一致しない入力を拒否します。この照合は独立した署名検証ではありません。
 
-修正後の実行には、各版の統合差分 `patches/php-<version>.patch` と、公式修正が守る条件を安全な手段で検査する実行可能な `checks/<version>.sh` を用意する。検査スクリプトには第 1 引数で展開済みソースのパス、第 2 引数で版番号を渡す。**公式修正の公開前に防御条件を推測して検査を埋めない。** 必要なパッチや検査が欠けた版は失敗とする。
+## 版ごとの適用と起動
 
-作業木は `<results-dir>/work/<version>/` に残す。再実行時は元アーカイブのハッシュを照合してから中間成果物を再利用する。パッチを適用した作業木へ同じパッチを重ねず、別のパッチや無修正ベースラインを混ぜようとした場合は失敗する。各版はパッチの厳密な dry-run と適用後、Apache/mod_php をソースからビルドする。ビルド結果と Apache に導入されたモジュールのファイル一致を確認し、`health.php` で版番号、`apache2handler`、通常のセッション読み書きを確認する。パッチモードでは続いて版別の防御条件検査を通す。結果は既定で `/private/tmp/php-backport-results/<mode>/<version>/` に保存する。`--results-dir` で変更できる。
+必要なパッチと `checks/<版>.sh` がある版を指定します。以下の `source_dir` にアーカイブを置きます。4 CPU・4 GiB の VM では同時数 `--jobs 2` を使います。
 
-PHP 5.6 用の Debian Stretch 開発パッケージは 2026 年時点で署名鍵が期限切れのため、隔離した検証イメージに限ってアーカイブから取得した。このビルダーを本番環境へ転用しない。ARM ホスト上の amd64 変換実行なので、ネイティブ x86_64 の競合タイミングやヒープ配置は再現を保証しない。ベースラインの成功は、修正の安全性を意味しない。
+```bash
+source_dir="$HOME/php-backport-lab/sources"
+results_dir="$HOME/php-backport-lab/results"
+mkdir -p "$source_dir" "$results_dir"
 
-PHP 5.6.40 の緊急候補では、`check-php56-multipart.sh <展開済みソース> PROGRESS_ABSENT` が良性 multipart と通常セッションを確認する。比較元で進捗機能が動く場合は `PROGRESS_PRESENT` を指定する。`checks/5.6.40.sh` は CVE-2026-109619 の全経路が未検証であることを終了コード 3 で示すため、matrix の `fail (3)` はビルド失敗と区別して `runtime.txt` と `defense-check.log` を確認する。
+lab/run-matrix.sh --mode patch \
+  --versions 5.6.40,7.3.29,7.3.33,7.4.33,8.0.30,8.1.34 --jobs 2 \
+  --source-dir "$source_dir" --results-dir "$results_dir" \
+  --patch-dir "$PWD/patches" --check-dir "$PWD/checks"
+```
+
+単一版だけ試す場合は、例えば `--versions 7.3.29 --jobs 1` に変更します。無修正の比較は `--mode baseline` とし、パッチモードとは異なる `--results-dir` を指定します。結果は `$results_dir/<mode>/<版>/` の `status`、`runtime.txt`、`defense-check.log`、各ビルドログに残ります。作業木は `$results_dir/work/<版>/` です。パッチ変更後も新しい `--results-dir` を使い、以前の差分に重ねて適用しません。
+
+`pass` は厳密なパッチ適用、ビルド、Apache のロードモジュール一致、通常 HTTP・セッション、版別のソース検査が通った意味です。悪用不能性の証明ではありません。5.6.40 の `fail (3)` は、通常動作と選択した防御条件を確認したうえで、CVE-2026-109619 の別経路が未検証であることを示す意図的な未完了判定です。詳細は `runtime.txt` と `defense-check.log` を確認してください。
