@@ -6,3 +6,4 @@ script_dir=$(cd "$(dirname "$(realpath "$0")")" && pwd)
 "$script_dir/../check-session-init-failure.sh" "$1"
 "$script_dir/../check-reference-progress.sh" "$1"
 "$script_dir/../check-session-formats.sh" "$1"
+"$script_dir/../check-no-file-progress.sh" "$1"

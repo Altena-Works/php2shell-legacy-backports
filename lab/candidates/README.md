@@ -1,5 +1,7 @@
 # 未検証の作業候補
 
+`patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。結果は `pass` ですが、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
+
 `php-5.6.40-late-error.patch` は、既存の緊急差分に、post-RSHUTDOWN 後の `last_error_message`・`last_error_file` 消去を加えた合成差分です。PHP 5.6.40 の元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルド、通常セッション・multipart、進捗停止を確認しました。後処理診断による残存状態と両 CVE の全経路は未検証です。配布用 `patches/` には移していません。
 
 `php-5.6.40-session-preserving.patch` は、上記の緊急差分を土台に、早期の upload progress 更新中だけ保存済みオブジェクトを不完全クラスとして復号し、`Serializable` の元ペイロードを再保存する**開発途中の差分**です。multipart 開始時にセッション状態を初期化し、保存先の初期化・読取失敗時は進捗更新を止めます。既存の進捗キーが参照値なら、旧版のシンボル更新が値を移した先へ進捗側の `zval *` を付け替え、旧版の参照関係も保ちます。通常の `serialize()` と通常のセッション読取失敗の扱いは維持します。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド後の増分コンパイル、通常の multipart・upload progress、無害な `Serializable` 値の維持を確認しました。[早期失敗検査](check-session-init-failure.sh)では無効な保存先で警告が記録され、通常のアップロードと同じワーカーの後続要求が成功しました。[参照値検査](check-reference-progress.sh)では進捗と別キーの参照関係を確認しました。[保存形式検査](check-session-formats.sh)では `php`・`php_binary`・`php_serialize` で無害な `Serializable` 値、通常 multipart、進捗記録を確認しました。両 CVE の遮断、OOM 後のワーカー回復、保存形式の異常系や他のデータ型は未検証です。配布用 `patches/` には移していません。
