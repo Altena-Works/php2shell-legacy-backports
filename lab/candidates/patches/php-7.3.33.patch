@@ -3255,7 +3255,26 @@
  	{
 --- a/ext/standard/string.c
 +++ b/ext/standard/string.c
-@@ -5437,7 +5437,10 @@
+@@ -1251,7 +1251,17 @@
+ 	} ZEND_HASH_FOREACH_END();
+ 
+ 	/* numelems can not be 0, we checked above */
+-	str = zend_string_safe_alloc(numelems - 1, ZSTR_LEN(glue), len, 0);
++	str = zend_string_safe_falloc(numelems - 1, ZSTR_LEN(glue), len, 0);
++	if (UNEXPECTED(str == NULL)) {
++		while (ptr > strings) {
++			ptr--;
++			if (ptr->str && ptr->lval) {
++				zend_string_release_ex(ptr->str, 0);
++			}
++		}
++		free_alloca(strings, use_heap);
++		return;
++	}
+ 	cptr = ZSTR_VAL(str) + ZSTR_LEN(str);
+ 	*cptr = 0;
+ 
+@@ -5437,7 +5447,10 @@
  		RETURN_EMPTY_STRING();
  
  	/* Initialize the result string */
@@ -3267,7 +3286,7 @@
  	result_len = ZSTR_LEN(input_str) * mult;
  
  	/* Heavy optimization for situations where input string is 1 byte long */
-@@ -5791,7 +5794,10 @@
+@@ -5791,7 +5804,10 @@
  		return;
  	}
  
