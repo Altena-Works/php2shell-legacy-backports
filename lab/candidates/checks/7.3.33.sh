@@ -4,7 +4,7 @@ set -euo pipefail
 source_tree=${1:?source tree required}
 version=${2:?version required}
 [[ $version == 7.3.33 ]] || exit 2
-script_dir=$(cd "$(dirname "$0")/../.." && pwd)
+script_dir=$(cd "$(dirname "$(realpath "$0")")/../.." && pwd)
 
 "$script_dir/check-multipart-progress.sh" "$source_tree" "$version" PROGRESS_PRESENT
 

@@ -25,7 +25,7 @@
 
 CVE-2026-109619 についても、upload progress 停止は緊急緩和にとどまる。特に 5.6.40 は [版別調査](notes/php-5.6.40.md) に記録した別の状態経路が未検証である。両 CVE は版ごとに独立して判定する。
 
-7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[未検証の候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし dry-run は通過。ビルド、実行、防御効果は未検証であり、配布用 `patches/` には移していない。
+7.3.33 の upload progress を機能維持で戻すには、専用の不完全クラス復号だけでなく `C:` 形式のペイロードを失わない再符号化も必要と確認した。[作業候補](lab/candidates/README.md)に旧版 API へ合わせた差分と良性のセッション保存検査を置いた。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php でのビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値の維持は通過。OOM 後の挙動と防御効果は未検証であり、配布用 `patches/` には移していない。
 
 ## 次の作業
 
@@ -33,7 +33,7 @@ CVE-2026-109619 についても、upload progress 停止は緊急緩和にとど
 2. 版別に通常の上限到達を安全な位置へ遅延配送し、厳格な上限や実際の割当失敗のみをワーカー終了に送る。CVE-2026-109619 の残存経路と、upload progress を含む正常機能への影響も判定する。
 3. [検証ラボ](lab/README.md)の Linux/amd64・Apache/mod_php で、良性の上限到達後もワーカーが再利用でき、次の通常リクエストが成功することを確認する。攻撃コードや PoC は作成・実行しない。未確認範囲は公開資料に残す。
 
-今回の追加実行でも `php-backport-lab` を起動できなかった。同じホストで別の Podman VM `staticwebos-build` と、その中の `staticwebos-native` コンテナが稼働中であることを確認した。ユーザーの指定に従い別作業の終了を待ち、VM とコンテナは変更していない。新しい実機結果はない。
+別作業の Podman VM `staticwebos-build` が自然に停止した後、`php-backport-lab` を起動して 7.3.33 候補を検証した。別作業のVMとコンテナは変更していない。候補の結果は `/private/tmp/php-backport-candidate-73/results/patch/7.3.33/` に保存した。`pass` は上記の正常系に限り、両 CVE の遮断判定ではない。
 
 ## 参照先
 
