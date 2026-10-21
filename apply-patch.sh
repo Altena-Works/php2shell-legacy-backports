@@ -83,3 +83,4 @@ source_tree=$temp_dir/php-$version
 mv -- "$temp_dir" "$target_dir"
 temp_dir=
 echo "Patched source: $target_dir/php-$version"
+echo 'Verification candidate only: complete remediation of both CVEs has not been established.' >&2

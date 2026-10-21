@@ -2,6 +2,8 @@
 
 このラボは各版のソースを別の作業木で修正し、`linux/amd64` コンテナ内で Apache モジュールをビルドします。Web ポートは公開せず、コンテナ内の loopback から通常の HTTP とセッションを確認します。macOS では Podman VM を起動してください。ARM ホスト上の amd64 変換実行はネイティブ x86_64 と同じヒープ配置や競合タイミングを保証しません。
 
+標準のパッチ検証対象は、このリポジトリで独自移植した 5.6.40・7.3.29・7.3.33 です。PHP 公式が配布する 7.4・8.0・8.1 の最小バックポートはここに含めません。`pass` も脆弱性の完全遮断を意味しません。
+
 ## 準備
 
 リポジトリのルートで、使う版に応じたビルダーを作ります。PHP 5.x 用は古い Debian のパッケージを使うため、このラボだけに使ってください。
@@ -9,7 +11,6 @@
 ```bash
 podman build --platform linux/amd64 -t localhost/php-backport-build:5.6 -f lab/Containerfile.php56 .
 podman build --platform linux/amd64 -t localhost/php-backport-build:7.4 -f lab/Containerfile.php74 .
-podman build --platform linux/amd64 -t localhost/php-backport-build:8.1 -f lab/Containerfile.php81 .
 ```
 
 ソースは [PHP 旧版アーカイブ](https://museum.php.net/)から `php-<版>.tar.gz` を取得します。例えば 7.3.29 は `https://museum.php.net/php7/php-7.3.29.tar.gz` です。`lab/source-hashes.tsv` は取得済みアーカイブの SHA-256 を固定しており、スクリプトは一致しない入力を拒否します。この照合は独立した署名検証ではありません。
@@ -24,7 +25,7 @@ results_dir="$HOME/php-backport-lab/results"
 mkdir -p "$source_dir" "$results_dir"
 
 lab/run-matrix.sh --mode patch \
-  --versions 5.6.40,7.3.29,7.3.33,7.4.33,8.0.30,8.1.34 --jobs 2 \
+  --versions 5.6.40,7.3.29,7.3.33 --jobs 2 \
   --source-dir "$source_dir" --results-dir "$results_dir" \
   --patch-dir "$PWD/patches" --check-dir "$PWD/checks"
 ```
@@ -36,6 +37,6 @@ lab/run-matrix.sh --mode patch \
 upload progress の機能制限は、通常の小さな multipart 投稿で別途確認できます。この検査は管理設定で progress を有効、cleanup を無効にした上で、修正済み版では `PROGRESS_ABSENT` を期待します。
 
 ```bash
-version=8.1.34
+version=7.3.29
 lab/check-multipart-progress.sh "$results_dir/work/$version/php-$version" "$version" PROGRESS_ABSENT
 ```

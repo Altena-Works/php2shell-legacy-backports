@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "$0")" && pwd)
 mode=patch
 jobs=2
-versions=5.4.45,5.5.38,5.6.40,7.0.33,7.1.33,7.2.34,7.3.29,7.3.33,7.4.33,8.0.30,8.1.34
+versions=5.6.40,7.3.29,7.3.33
 source_dir=/private/tmp/php-backport-sources
 results_dir=/private/tmp/php-backport-results
 patch_dir=

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 version=${1:?version required}
-[[ $version =~ ^[578]\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version: $version" >&2; exit 2; }
+[[ $version =~ ^[57]\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version: $version" >&2; exit 2; }
 mode=${PHP_MATRIX_MODE:?mode required}
 source_dir=${PHP_SOURCE_DIR:?source directory required}
 results_root=${PHP_RESULTS_DIR:?results directory required}
@@ -35,7 +35,6 @@ trap finish EXIT
 case "$version" in
     5.*) image=localhost/php-backport-build:5.6 ;;
     7.*) image=localhost/php-backport-build:7.4 ;;
-    8.*) image=localhost/php-backport-build:8.1 ;;
     *) echo "unsupported version: $version" >&2; exit 2 ;;
 esac
 
