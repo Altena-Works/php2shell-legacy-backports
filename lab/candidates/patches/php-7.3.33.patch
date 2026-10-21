@@ -1846,24 +1846,45 @@
  	ps_globals->session_status = php_session_none;
  	ps_globals->default_mod = NULL;
  	ps_globals->mod_user_implemented = 0;
-@@ -3127,8 +3145,11 @@
+@@ -3108,6 +3126,9 @@
+ 
+ static void php_session_rfc1867_update(php_session_rfc1867_progress *progress, int force_update) /* {{{ */
+ {
++	if (ZEND_HAS_OOM()) {
++		return;
++	}
+ 	if (!force_update) {
+ 		if (Z_LVAL_P(progress->post_bytes_processed) < progress->next_update) {
+ 			return;
+@@ -3127,29 +3148,53 @@
  		progress->next_update = Z_LVAL_P(progress->post_bytes_processed) + progress->update_step;
  	}
  
 -	php_session_initialize();
 -	PS(session_status) = php_session_active;
 +	PS(in_rfc1867_update) = 1;
-+	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
-+		PS(in_rfc1867_update) = 0;
-+		return;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active || ZEND_HAS_OOM()) {
++		goto done;
 +	}
  	IF_SESSION_VARS() {
  		zval *sess_var = Z_REFVAL(PS(http_session_vars));
  		SEPARATE_ARRAY(sess_var);
-@@ -3138,18 +3159,23 @@
++		if (ZEND_HAS_OOM()) {
++			goto done;
++		}
+ 
+ 		progress->cancel_upload |= php_check_cancel_upload(progress);
++		if (ZEND_HAS_OOM()) {
++			goto done;
++		}
+ 		Z_TRY_ADDREF(progress->data);
  		zend_hash_update(Z_ARRVAL_P(sess_var), progress->key.s, &progress->data);
  	}
- 	php_session_flush(1);
+-	php_session_flush(1);
++	if (!ZEND_HAS_OOM()) {
++		php_session_flush(1);
++	}
++done:
 +	PS(in_rfc1867_update) = 0;
  } /* }}} */
  
@@ -1871,22 +1892,31 @@
  {
 -	php_session_initialize();
 -	PS(session_status) = php_session_active;
-+	PS(in_rfc1867_update) = 1;
-+	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active) {
-+		PS(in_rfc1867_update) = 0;
++	if (ZEND_HAS_OOM()) {
 +		return;
++	}
++	PS(in_rfc1867_update) = 1;
++	if (php_session_initialize() == FAILURE || PS(session_status) != php_session_active || ZEND_HAS_OOM()) {
++		goto done;
 +	}
  	IF_SESSION_VARS() {
  		zval *sess_var = Z_REFVAL(PS(http_session_vars));
  		SEPARATE_ARRAY(sess_var);
++		if (ZEND_HAS_OOM()) {
++			goto done;
++		}
  		zend_hash_del(Z_ARRVAL_P(sess_var), progress->key.s);
  	}
- 	php_session_flush(1);
+-	php_session_flush(1);
++	if (!ZEND_HAS_OOM()) {
++		php_session_flush(1);
++	}
++done:
 +	PS(in_rfc1867_update) = 0;
  } /* }}} */
  
  static int php_session_rfc1867_callback(unsigned int event, void *event_data, void **extra) /* {{{ */
-@@ -3160,7 +3186,7 @@
+@@ -3160,7 +3205,7 @@
  	if (php_session_rfc1867_orig_callback) {
  		retval = php_session_rfc1867_orig_callback(event, event_data, extra);
  	}
@@ -1895,7 +1925,7 @@
  		return retval;
  	}
  
-@@ -3169,6 +3195,7 @@
+@@ -3169,6 +3214,7 @@
  	switch(event) {
  		case MULTIPART_EVENT_START: {
  			multipart_event_start *data = (multipart_event_start *) event_data;
@@ -1903,7 +1933,36 @@
  			progress = ecalloc(1, sizeof(php_session_rfc1867_progress));
  			progress->content_length = data->content_length;
  			progress->sname_len  = strlen(PS(session_name));
-@@ -3326,6 +3353,11 @@
+@@ -3305,14 +3351,20 @@
+ 			multipart_event_end *data = (multipart_event_end *) event_data;
+ 
+ 			if (Z_TYPE(progress->sid) && progress->key.s) {
+-				if (PS(rfc1867_cleanup)) {
+-					php_session_rfc1867_cleanup(progress);
+-				} else {
+-					if (!Z_ISUNDEF(progress->data)) {
+-						SEPARATE_ARRAY(&progress->data);
+-						add_assoc_bool_ex(&progress->data, "done", sizeof("done") - 1, 1);
+-						Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
+-						php_session_rfc1867_update(progress, 1);
++				if (!ZEND_HAS_OOM()) {
++					if (PS(rfc1867_cleanup)) {
++						php_session_rfc1867_cleanup(progress);
++					} else {
++						if (!Z_ISUNDEF(progress->data)) {
++							SEPARATE_ARRAY(&progress->data);
++							if (!ZEND_HAS_OOM()) {
++								add_assoc_bool_ex(&progress->data, "done", sizeof("done") - 1, 1);
++								if (!ZEND_HAS_OOM()) {
++									Z_LVAL_P(progress->post_bytes_processed) = data->post_bytes_processed;
++									php_session_rfc1867_update(progress, 1);
++								}
++							}
++						}
+ 					}
+ 				}
+ 				php_rshutdown_session_globals();
+@@ -3326,6 +3378,11 @@
  			efree(progress);
  			progress = NULL;
  			PS(rfc1867_progress) = NULL;
