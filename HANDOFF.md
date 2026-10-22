@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `a69c2d0ce93f8561d231e36dd32d82bff2b32ff75950c72a57d19779806cbd4f`。`wordwrap()` の最終縮小を元の非失敗可能処理に戻した。libmbflのバッファ失敗状態、filter/flush、結果引渡しとPHP呼び出し元の処理を追加し、固定元ソースへ fuzz なし適用できた。前段候補 `aee2d8406943a77eafcb256238ecc61d79e75c6c2eb0366e0d20fa03a4a2e997` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補はそのビルドへ `mbfilter.c` と `mbstring.c` の追加修正を適用して増分コンパイル・リンク、通常mbstring機能と良性OOM検査を通過した。**現候補の全体クリーンビルドは未実施。** 前候補の他経路の記録は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)。
+7.3.33 の現候補 SHA-256 は `99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12`。libmbflのバッファ失敗状態、filter/flush、結果引渡しとPHP呼び出し元に加え、全角・半角変換で失敗時の部分結果を返さず解放する処理を追加した。固定元ソースへのfuzzなし適用、Linux/amd64・Apache/mod_phpのクリーンビルドと版別検査は `pass`。生成モジュール SHA-256 は `ea73f29fa4c7bb1f51d1087201863613c7ec5ea73180c07a3ce14e92e0aeaa68`。証拠は `/private/tmp/php-backport-73-kana-clean-2/patch/7.3.33/`。全経路遮断の確認には達していない。前候補の他経路の記録は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -30,20 +30,20 @@ EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結
 
 SOAPを7.3の旧APIに移した前候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は、固定元ソースへのfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェック `pass` を確認した。通常SOAP往復は `SOAP_OK`。大きな通常SOAP応答の8 MiB制限下でOOM報告と同一Apacheワーカーの次要求処理を確認した。実測はHTTP応答本文の経路のみで、chunked応答、引数・多次元復号や他の確保失敗地点は未検証。証拠は `/private/tmp/php-backport-73-soap-final-clean/patch/7.3.33/`。
 
-mbstring入力変換・正規表現の前候補はLinux/amd64・Apache/mod_phpで通常動作と良性OOM後の同一ワーカー継続を確認。今回のlibmbfl候補では、Quoted-Printableの通常往復、`mb_ord`、`mb_substr_count`、MIMEヘッダの通常動作と、libmbfl出力の8 MiB制限下でのOOM報告・同一ワーカー継続を確認した。修正前候補では同じ良性OOM要求のHTTP応答が途中で切れた。現候補の増分ビルド済みモジュール SHA-256 は `8ae1960bb7217a0df555af870c7de30b6caec875ed46f953e2048e6f67227d1e`。証拠は `/private/tmp/php-backport-73-libmbfl-final-clean/`。GET/Cookie/POSTの直接入口、regex callback・旧 `e` モードのOOM、libmbfl各失敗地点は未実測。`mbfl_strcut` など無視されたfilter結果は続けて監査する。
+mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、`mb_convert_kana` の通常動作を確認した。libmbfl出力と全角・半角変換の8 MiB制限下での良性OOM報告・同一ワーカー継続も確認。GET/Cookie/POSTの直接入口、regex callback・旧 `e` モードのOOM、libmbfl各失敗地点は未実測。`mbfl_strcut` など無視されたfilter結果は続けて監査する。
 
 ## 次の作業
 
-1. 7.3.33 の残る13ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の残る11ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
 
 公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
-ユーザーの明示許可により `staticwebos-build` VM を正常停止していた。前回は `php-backport-lab` で7.3.33 EXIF有効ビルドと検査を実施し、検証後にVMを正常停止した。今回はmbstring有効のクリーンビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
+ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で7.3.33のクリーンビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
-GitHub への次回 push は保留。新しい eMudhra CA 信頼禁止規定について Git HTTPS の実際の検証経路で拒否を確認できず、GitHub SSH は `Permission denied (publickey)` だった。ローカルの変更は保持し、証明書検証または SSH 認証を満たす経路で送信する。
+ユーザーがGitHub証明書について通常のpushを許可したため、TLS検証を無効化せず作業ブランチへ送信できた。main/masterへのpushは行わない。
 
 ## 参照先
 

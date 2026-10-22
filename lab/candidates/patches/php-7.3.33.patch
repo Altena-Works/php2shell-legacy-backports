@@ -7804,7 +7804,65 @@
  		mbfl_convert_filter_delete(encoder);
  		mbfl_convert_filter_delete(decoder);
  	}
-@@ -2007,6 +2039,10 @@
+@@ -1800,14 +1832,14 @@
+ 		string->encoding,
+ 		mbfl_memory_device_output, 0, &device);
+ 	if (decoder == NULL) {
+-		goto out;
++		goto fail;
+ 	}
+ 	next_filter = decoder;
+ 
+ 	param =
+ 		(mbfl_filt_tl_jisx0201_jisx0208_param *)mbfl_malloc(sizeof(mbfl_filt_tl_jisx0201_jisx0208_param));
+ 	if (param == NULL) {
+-		goto out;
++		goto fail;
+ 	}
+ 
+ 	param->mode = mode;
+@@ -1819,7 +1851,7 @@
+ 		next_filter);
+ 	if (tl_filter == NULL) {
+ 		mbfl_free(param);
+-		goto out;
++		goto fail;
+ 	}
+ 
+ 	tl_filter->opaque = param;
+@@ -1832,7 +1864,7 @@
+ 		(int(*)(void*))next_filter->filter_flush,
+ 		next_filter);
+ 	if (encoder == NULL) {
+-		goto out;
++		goto fail;
+ 	}
+ 
+ 	/* feed data */
+@@ -1841,14 +1873,20 @@
+ 	if (p != NULL) {
+ 		while (n > 0) {
+ 			if ((*encoder->filter_function)(*p++, encoder) < 0) {
+-				break;
++				goto fail;
+ 			}
+ 			n--;
+ 		}
+ 	}
+ 
+-	mbfl_convert_filter_flush(encoder);
++	if (mbfl_convert_filter_flush(encoder) < 0) {
++		goto fail;
++	}
+ 	result = mbfl_memory_device_result(&device, result);
++	goto out;
++fail:
++	mbfl_memory_device_clear(&device);
++	result = NULL;
+ out:
+ 	if (tl_filter != NULL) {
+ 		if (tl_filter->opaque != NULL) {
+@@ -2007,6 +2045,10 @@
  mbfl_string *
  mime_header_encoder_result(struct mime_header_encoder_data *pe, mbfl_string *result)
  {
@@ -7815,7 +7873,7 @@
  	if (pe->status1 >= 10) {
  		(*pe->conv2_filter->filter_flush)(pe->conv2_filter);
  		(*pe->encod_filter->filter_flush)(pe->encod_filter);
-@@ -2020,6 +2056,10 @@
+@@ -2020,6 +2062,10 @@
  			}
  		}
  		mbfl_memory_device_devcat(&pe->outdev, &pe->tmpdev);
@@ -7826,7 +7884,7 @@
  	}
  	mbfl_memory_device_reset(&pe->tmpdev);
  	pe->prevpos = 0;
-@@ -2367,6 +2407,10 @@
+@@ -2367,6 +2413,10 @@
  mbfl_string *
  mime_header_decoder_result(struct mime_header_decoder_data *pd, mbfl_string *result)
  {
@@ -7837,7 +7895,7 @@
  	switch (pd->status) {
  	case 1:
  	case 2:
-@@ -2384,6 +2428,10 @@
+@@ -2384,6 +2434,10 @@
  		break;
  	}
  	(*pd->conv2_filter->filter_flush)(pd->conv2_filter);
