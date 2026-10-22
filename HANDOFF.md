@@ -9,14 +9,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 統合候補へ `array_fill` と `range` の失敗可能な配列初期化を追加。固定済み元アーカイブからクリーンビルドし、Apache/mod_php で両関数の正常系・良性OOM後の同一ワーカー継続、3保存形式のセッション・進捗を確認 | `ext/standard/array.c` の残る `array_pad`・`array_map`・`array_chunk`、他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 前候補の `array_fill`・`range` はクリーンビルドと Apache/mod_php 正常系・良性OOM後の同一ワーカー継続を確認。現行候補へ `array_chunk`・複数配列の `array_map` の失敗可能な初期化を追加し、元ソースへの fuzz なし適用を確認 | 現行候補のビルド・実機検査、`array_pad`、他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 統合候補の最新差分 SHA-256 は `206d9d1a6044b46977cceba5da467baa078dab5cb518bb486cd4c625feadda65`。`array_fill` と `range` の初期 HashTable 構造体・バケット確保を失敗可能にし、失敗時は未初期化配列へ書き込まない。`/private/tmp/php-backport-73-array-fill-range-clean2/patch/7.3.33/` で元アーカイブへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。`libphp7.so` の SHA-256 は `05398269cc20d6932c054ead31edb56d2fc012f38007dc71d8c7a342e7ac0703`。`array_fill` の packed・mixed、`range` の整数・浮動小数点で旧版の正常結果と良性 soft OOM 後の同一ワーカー継続を確認した。3保存形式のセッション、multipart、最終進捗と既存の良性OOM検査も通過した。全入口・全拡張の遮断は未確認。
+7.3.33 統合候補の現行差分 SHA-256 は `e59f00fabb8817ad03520ef899760baf7349550af1fb67e4a2e102ae2a7c915b`。元ソースへの fuzz なし dry-run と検査スクリプトの `bash -n` は通過した。`array_chunk`・複数配列の `array_map` について失敗可能な外側初期化と保留 OOM 中断を加え、良性OOM用フィクスチャを作成したが、**現行差分のビルド・実機検査は未実施**。前候補 `206d9d1a6044b46977cceba5da467baa078dab5cb518bb486cd4c625feadda65` は `/private/tmp/php-backport-73-array-fill-range-clean2/patch/7.3.33/` でクリーンビルド、Apache/mod_php 版別チェックが `pass`。`libphp7.so` SHA-256 は `05398269cc20d6932c054ead31edb56d2fc012f38007dc71d8c7a342e7ac0703`。`array_fill` packed・mixed、`range` 整数・浮動小数点で正常結果と良性 soft OOM 後の同一ワーカー継続を確認した。3保存形式のセッション、multipart、最終進捗も通過した。全入口・全拡張の遮断は未確認。
 
 `str_repeat`・`str_pad`・`implode`・`chunk_split`・`wordwrap` の失敗可能割当は、`heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。`wordwrap` の途中の拡張・縮小も失敗可能な再割当へ変更し、失敗時に元の文字列を解放する。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理と `wordwrap` の旧版の引数エラー、結果拡張時の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。拡張・縮小の割当失敗を個別に発生させる動的検査は未実施。
 
@@ -28,11 +28,11 @@
 
 ## 次の作業
 
-1. 7.3.33 は 8.2.34→8.2.35 の `ext/standard/array.c` 差分に残る `array_pad`・`array_map`・`array_chunk` の失敗可能な挿入・再割当と参照数の後始末を移植する。他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。特に upload progress 中の復号 OOM と要求間状態を判定する。
+1. 7.3.33 は VM が使えるようになり次第、現行候補のクリーンビルドと `array_chunk`・`array_map` の良性検査を実施する。続いて `array_pad` の失敗可能な挿入・再割当と参照数の後始末を移植する。他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。特に upload progress 中の復号 OOM と要求間状態を判定する。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 
-検証VMは作業終了時に `podman machine stop php-backport-lab` で正常停止する。別作業の `staticwebos-build` VMは変更しない。
+検証VMは作業終了時に `podman machine stop php-backport-lab` で正常停止する。現時点では別作業の `staticwebos-build` VM が稼働していたため、`php-backport-lab` は起動できていない。別作業の VM は変更しない。
 
 GitHub への次回 push は保留。新しい eMudhra CA 信頼禁止規定について Git HTTPS の実際の検証経路で拒否を確認できず、GitHub SSH は `Permission denied (publickey)` だった。ローカルの変更は保持し、証明書検証または SSH 認証を満たす経路で送信する。
 

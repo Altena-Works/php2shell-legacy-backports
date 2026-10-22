@@ -3904,3 +3904,46 @@
  	} while (0)
  
  /* {{{ proto array range(mixed low, mixed high[, int step])
+@@ -6167,7 +6171,10 @@
+ 			}
+ 		}
+ 
+-		array_init_size(return_value, maxlen);
++		if (UNEXPECTED(!array_finit_size_packed(return_value, maxlen))) {
++			efree(array_pos);
++			RETURN_OOM();
++		}
+ 
+ 		if (!ZEND_FCI_INITIALIZED(fci)) {
+ 			zval zv;
+@@ -6177,6 +6184,10 @@
+ 
+ 				/* If no callback, the result will be an array, consisting of current
+ 				 * entries from all arrays. */
++				if (ZEND_HAS_OOM()) {
++					efree(array_pos);
++					RETURN_OOM();
++				}
+ 				array_init_size(&result, n_arrays);
+ 
+ 				for (i = 0; i < n_arrays; i++) {
+@@ -6319,13 +6330,18 @@
+ 		size = num_in > 0 ? num_in : 1;
+ 	}
+ 
+-	array_init_size(return_value, (uint32_t)(((num_in - 1) / size) + 1));
++	if (UNEXPECTED(!array_finit_size_packed(return_value, (uint32_t)(((num_in - 1) / size) + 1)))) {
++		RETURN_OOM();
++	}
+ 
+ 	ZVAL_UNDEF(&chunk);
+ 
+ 	ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(input), num_key, str_key, entry) {
+ 		/* If new chunk, create and initialize it. */
+ 		if (Z_TYPE(chunk) == IS_UNDEF) {
++			if (ZEND_HAS_OOM()) {
++				RETURN_OOM();
++			}
+ 			array_init_size(&chunk, (uint32_t)size);
+ 		}
+ 
