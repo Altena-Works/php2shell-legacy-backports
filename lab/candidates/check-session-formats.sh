@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source_tree=${1:?patched PHP 5.6.40 source tree required}
-[[ -f "$source_tree/libs/libphp5.so" ]] || exit 2
+source_tree=${1:?patched PHP source tree required}
+case "$(basename "$source_tree")" in
+    php-5.6.40) module=libphp5.so; image=localhost/php-backport-build:5.6 ;;
+    php-7.3.33) module=libphp7.so; image=localhost/php-backport-build:7.4 ;;
+    *) exit 2 ;;
+esac
+[[ -f "$source_tree/libs/$module" ]] || exit 2
 script_dir=$(cd "$(dirname "$0")" && pwd)
 
 for serializer in php php_binary php_serialize; do
@@ -11,9 +16,10 @@ for serializer in php php_binary php_serialize; do
         -v "$script_dir/session-fixture.php:/var/www/html/session-fixture.php:ro" \
         -v "$script_dir/../normal-multipart.php:/var/www/html/normal-multipart.php:ro" \
         -e SERIALIZER="$serializer" \
-        localhost/php-backport-build:5.6 bash -lc '
+        -e PHP_MODULE_NAME="$module" \
+        "$image" bash -lc '
             set -e
-            install -m 644 /src/libs/libphp5.so /usr/lib/apache2/modules/libphp5.so
+            install -m 644 "/src/libs/$PHP_MODULE_NAME" "/usr/lib/apache2/modules/$PHP_MODULE_NAME"
             printf "%s\n" "php_value session.serialize_handler $SERIALIZER" \
                 "php_value session.upload_progress.enabled On" \
                 "php_value session.upload_progress.cleanup Off" \
