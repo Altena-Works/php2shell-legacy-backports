@@ -1,6 +1,6 @@
 # 未検証の作業候補
 
-7.3.33 の統合候補には、遅延 OOM 中断、主要文字列関数の失敗可能な割当、`explode` と upload progress の OOM 保留確認、`array_fill`・`range`・`array_chunk`・複数配列の `array_map` の失敗可能な初期化を含めました。保存モジュールの open・ID生成・read の失敗分岐を守り、multipart 終了時には配列分離・更新後に `bytes_processed` バケットを引き直します。現行パッチ SHA-256 は `e59f00fabb8817ad03520ef899760baf7349550af1fb67e4a2e102ae2a7c915b`。元ソースへの fuzz なし dry-run は通過しました。`array_chunk`・`array_map` の追加分はビルド・実機検査が未実施です。前候補 `206d9d1a6044b46977cceba5da467baa078dab5cb518bb486cd4c625feadda65` は Linux/amd64 クリーンビルドと Apache/mod_php 版別チェックを通過し、`libphp7.so` の SHA-256 は `05398269cc20d6932c054ead31edb56d2fc012f38007dc71d8c7a342e7ac0703` でした。`array_pad`、他の大型割当・再割当、OOM の厳密な発生地点、両 CVE の全経路遮断は未確認です。
+7.3.33 の統合候補には、遅延 OOM 中断、主要文字列関数の失敗可能な割当、`explode` と upload progress の OOM 保留確認、`array_fill`・`range`・`array_chunk`・複数配列の `array_map`・`array_pad` の失敗可能な初期化を含めました。保存モジュールの open・ID生成・read の失敗分岐を守り、multipart 終了時には配列分離・更新後に `bytes_processed` バケットを引き直します。現行パッチ SHA-256 は `d0eee867ef1c8157bdaf6bd283882c8b2404d99b469a8af2d75ccda7aebcd3d5`。元ソースへの fuzz なし dry-run は通過しました。`array_chunk`・`array_map`・`array_pad` の追加分はビルド・実機検査が未実施です。前候補 `206d9d1a6044b46977cceba5da467baa078dab5cb518bb486cd4c625feadda65` は Linux/amd64 クリーンビルドと Apache/mod_php 版別チェックを通過し、`libphp7.so` の SHA-256 は `05398269cc20d6932c054ead31edb56d2fc012f38007dc71d8c7a342e7ac0703` でした。他の大型割当・再割当、OOM の厳密な発生地点、両 CVE の全経路遮断は未確認です。
 
 `patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。その後、割当上限の桁あふれ防止を追加して fuzz なし dry-run、増分ビルドと同じ正常系を再確認しました。現行候補の SHA-256 は `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f` です。追加変更後のクリーンビルド、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
 
@@ -22,6 +22,6 @@
 
 `checks/5.6.40.sh` と `checks/7.3.33.sh` は候補専用の正常系確認です。通常の multipart/upload progress と、既存セッション内の無害な `Serializable` 値が更新後も読めることを確認します。脆弱性の遮断を証明するテストではありません。`lab/run-matrix.sh` の `--patch-dir` / `--check-dir` には、候補を版名に合わせて配置した一時ディレクトリを渡します。チェックはリポジトリ内の良性フィクスチャを読むため、一時ディレクトリへはコピーせずシンボリックリンクで配置します。既存の検証結果と混ざらない新しい `--results-dir` を指定してください。
 
-7.3.33 の版別確認では、通常の multipart 終了後に進捗の `done=true` と `bytes_processed=content_length` も確かめます。前候補は Linux/amd64・Apache/mod_php で通過しました。これは最終進捗の正常動作を示す検査であり、OOM や異常終了時の両 CVE の遮断証明ではありません。現行候補では 8.2.34→8.2.35 の `ext/standard/array.c` 差分のうち `array_fill`・`range`・`array_chunk`・複数配列の `array_map` を移植しました。`array_pad` は残っています。
+7.3.33 の版別確認では、通常の multipart 終了後に進捗の `done=true` と `bytes_processed=content_length` も確かめます。前候補は Linux/amd64・Apache/mod_php で通過しました。これは最終進捗の正常動作を示す検査であり、OOM や異常終了時の両 CVE の遮断証明ではありません。現行候補では 8.2.34→8.2.35 の `ext/standard/array.c` 差分のうち `array_fill`・`range`・`array_chunk`・複数配列の `array_map` に加え、`array_pad` の事前確保を移植しました。後者は公式の挿入ごとの失敗処理と実装が異なるため、等価性を未確認として扱います。
 
 2026-10-22 の追加差分では、公式 8.2.35 と同じ終了境界で、post-RSHUTDOWN 後に再設定され得る `last_error_message` と `last_error_file` をメモリ管理終了前に消去します。変更した `main/main.c` は既存の Linux/amd64 ビルド木で増分コンパイルし、上記の正常系を再実行して通過しました。後処理中の診断を動的に起こした確認や、CVE-2026-109619 の全入口の遮断確認は未実施です。

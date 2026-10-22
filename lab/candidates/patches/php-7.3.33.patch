@@ -3904,7 +3904,31 @@
  	} while (0)
  
  /* {{{ proto array range(mixed low, mixed high[, int step])
-@@ -6167,7 +6171,10 @@
+@@ -4322,14 +4326,20 @@
+ 	}
+ 
+ 	num_pads = pad_size_abs - input_size;
++	if (HT_FLAGS(Z_ARRVAL_P(input)) & HASH_FLAG_PACKED) {
++		if (UNEXPECTED(!array_finit_size_packed(return_value, (uint32_t)pad_size_abs))) {
++			RETURN_OOM();
++		}
++	} else {
++		if (UNEXPECTED(!array_finit_size_mixed(return_value, (uint32_t)pad_size_abs))) {
++			RETURN_OOM();
++		}
++	}
+ 	if (Z_REFCOUNTED_P(pad_value)) {
+ 		GC_ADDREF_EX(Z_COUNTED_P(pad_value), num_pads);
+ 	}
+ 
+-	array_init_size(return_value, pad_size_abs);
+ 	if (HT_FLAGS(Z_ARRVAL_P(input)) & HASH_FLAG_PACKED) {
+-		zend_hash_real_init_packed(Z_ARRVAL_P(return_value));
+-
+ 		if (pad_size < 0) {
+ 			ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(return_value)) {
+ 				for (i = 0; i < num_pads; i++) {
+@@ -6167,7 +6177,10 @@
  			}
  		}
  
@@ -3916,7 +3940,7 @@
  
  		if (!ZEND_FCI_INITIALIZED(fci)) {
  			zval zv;
-@@ -6177,6 +6184,10 @@
+@@ -6177,6 +6190,10 @@
  
  				/* If no callback, the result will be an array, consisting of current
  				 * entries from all arrays. */
@@ -3927,7 +3951,7 @@
  				array_init_size(&result, n_arrays);
  
  				for (i = 0; i < n_arrays; i++) {
-@@ -6319,13 +6330,18 @@
+@@ -6319,13 +6336,18 @@
  		size = num_in > 0 ? num_in : 1;
  	}
  

@@ -16,6 +16,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-range-limit.php:/var/www/html/normal-range-limit.php:ro" \
     -v "$script_dir/normal-array-chunk-limit.php:/var/www/html/normal-array-chunk-limit.php:ro" \
     -v "$script_dir/normal-array-map-limit.php:/var/www/html/normal-array-map-limit.php:ro" \
+    -v "$script_dir/normal-array-pad-array-limit.php:/var/www/html/normal-array-pad-array-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -73,6 +74,9 @@ normal_array_chunk=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_array_map=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-array-map-limit.php)
 [[ $normal_array_map == ARRAY_MAP_OK ]] || { printf 'normal array_map failed: %s\n' "$normal_array_map" >&2; exit 1; }
+normal_array_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-array-pad-array-limit.php)
+[[ $normal_array_pad == ARRAY_PAD_ARRAY_OK ]] || { printf 'normal array_pad failed: %s\n' "$normal_array_pad" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -240,4 +244,24 @@ for map_case in outer inner; do
         printf 'Apache worker changed after %s array_map soft OOM\n' "$map_case" >&2; exit 1;
     }
 done
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED ARRAY_FILL_NORMAL_OK ARRAY_FILL_PACKED_OOM_REPORTED ARRAY_FILL_MIXED_OOM_REPORTED RANGE_NORMAL_OK RANGE_LONG_OOM_REPORTED RANGE_DOUBLE_OOM_REPORTED ARRAY_CHUNK_NORMAL_OK ARRAY_CHUNK_OUTER_OOM_REPORTED ARRAY_CHUNK_INNER_OOM_REPORTED ARRAY_MAP_NORMAL_OK ARRAY_MAP_OUTER_OOM_REPORTED ARRAY_MAP_INNER_OOM_REPORTED WORKER_REUSED
+for pad_case in packed_positive packed_negative mixed_positive mixed_negative; do
+    pad_url='http://127.0.0.1/normal-array-pad-array-limit.php?limit=1'
+    if [[ $pad_case == mixed_* ]]; then
+        pad_url+='&mixed=1'
+    fi
+    if [[ $pad_case == *_negative ]]; then
+        pad_url+='&negative=1'
+    fi
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/array-pad-array-limit.out "$pad_url" >/dev/null
+    pad_result=$(podman exec "$container_id" tail -c 500 /tmp/array-pad-array-limit.out)
+    after_array_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $pad_result == *READY* && $pad_result == *'Allowed memory size of 8388608 bytes exhausted'* && $pad_result != *RETURNED* ]] || {
+        printf 'expected %s array_pad soft OOM and request abort missing: %s\n' "$pad_case" "$pad_result" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_array_pad%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s array_pad soft OOM\n' "$pad_case" >&2; exit 1;
+    }
+done
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED ARRAY_FILL_NORMAL_OK ARRAY_FILL_PACKED_OOM_REPORTED ARRAY_FILL_MIXED_OOM_REPORTED RANGE_NORMAL_OK RANGE_LONG_OOM_REPORTED RANGE_DOUBLE_OOM_REPORTED ARRAY_CHUNK_NORMAL_OK ARRAY_CHUNK_OUTER_OOM_REPORTED ARRAY_CHUNK_INNER_OOM_REPORTED ARRAY_MAP_NORMAL_OK ARRAY_MAP_OUTER_OOM_REPORTED ARRAY_MAP_INNER_OOM_REPORTED ARRAY_PAD_ARRAY_NORMAL_OK ARRAY_PAD_ARRAY_PACKED_OOM_REPORTED ARRAY_PAD_ARRAY_MIXED_OOM_REPORTED WORKER_REUSED
