@@ -3830,7 +3830,19 @@
  	} else {
  		RETURN_FALSE;
  	}
-@@ -5437,7 +5500,10 @@
+@@ -4736,7 +4799,10 @@
+ 	{
+ 		size_t repl_len = is_xhtml ? (sizeof("<br />") - 1) : (sizeof("<br>") - 1);
+ 
+-		result = zend_string_safe_alloc(repl_cnt, repl_len, ZSTR_LEN(str), 0);
++		result = zend_string_safe_falloc(repl_cnt, repl_len, ZSTR_LEN(str), 0);
++		if (UNEXPECTED(!result)) {
++			RETURN_OOM();
++		}
+ 		target = ZSTR_VAL(result);
+ 	}
+ 
+@@ -5437,7 +5503,10 @@
  		RETURN_EMPTY_STRING();
  
  	/* Initialize the result string */
@@ -3842,7 +3854,7 @@
  	result_len = ZSTR_LEN(input_str) * mult;
  
  	/* Heavy optimization for situations where input string is 1 byte long */
-@@ -5791,7 +5857,10 @@
+@@ -5791,7 +5860,10 @@
  		return;
  	}
  
