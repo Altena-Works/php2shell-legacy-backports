@@ -14,6 +14,7 @@ for serializer in php php_binary php_serialize; do
     container_id=$(podman run --rm -d --platform linux/amd64 --network none \
         -v "$source_tree:/src:ro" \
         -v "$script_dir/session-fixture.php:/var/www/html/session-fixture.php:ro" \
+        -v "$script_dir/normal-unserialize.php:/var/www/html/normal-unserialize.php:ro" \
         -v "$script_dir/../normal-multipart.php:/var/www/html/normal-multipart.php:ro" \
         -e SERIALIZER="$serializer" \
         -e PHP_MODULE_NAME="$module" \
@@ -53,6 +54,15 @@ for serializer in php php_binary php_serialize; do
         exit 1
     }
     printf '%s: %s\n' "$serializer" 'MULTIPART_OK / PRESERVED / PROGRESS_PRESENT'
+    if [[ $module == libphp7.so ]]; then
+        unserialize_result=$(podman exec "$container_id" curl -fsS --max-time 5 \
+            http://127.0.0.1/normal-unserialize.php)
+        [[ $unserialize_result == UNSERIALIZE_OK ]] || {
+            printf 'unserialize normal path failed: %s\n' "$unserialize_result" >&2
+            exit 1
+        }
+        printf 'UNSERIALIZE_NORMAL_REPORTED\n'
+    fi
     podman stop --time 2 "$container_id" >/dev/null
     trap - EXIT
 done
