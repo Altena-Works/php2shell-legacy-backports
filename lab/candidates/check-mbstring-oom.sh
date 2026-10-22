@@ -9,6 +9,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$source_tree:/src:ro" \
     -v "$script_dir/normal-mbstring-limit.php:/var/www/html/normal-mbstring-limit.php:ro" \
     -v "$script_dir/normal-mbregex-limit.php:/var/www/html/normal-mbregex-limit.php:ro" \
+    -v "$script_dir/normal-mbfl-limit.php:/var/www/html/normal-mbfl-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -63,3 +64,19 @@ post=$(podman exec "$container_id" curl -fsS --max-time 5 \
     exit 1
 }
 printf '%s\n' MBREGEX_REPLACE_OOM_REPORTED WORKER_REUSED
+
+podman exec "$container_id" curl -sS --max-time 30 \
+    -o /tmp/mbfl-oom.out http://127.0.0.1/normal-mbfl-limit.php >/dev/null
+body=$(podman exec "$container_id" tail -c 700 /tmp/mbfl-oom.out)
+post=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $body == *READY* && $body != *RETURNED* && \
+    $body == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
+    printf 'mbfl OOM was not reported at the expected boundary: %s\n' "$body" >&2
+    exit 1
+}
+[[ ${post%%$'\n'*} == "$worker" ]] || {
+    printf 'Apache worker changed after mbfl OOM\n' >&2
+    exit 1
+}
+printf '%s\n' MBFL_OUTPUT_OOM_REPORTED WORKER_REUSED

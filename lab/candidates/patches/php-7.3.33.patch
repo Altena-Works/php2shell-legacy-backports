@@ -7430,3 +7430,408 @@
  	}
  
  	if (description) {
+--- a/ext/mbstring/libmbfl/mbfl/mbfl_memory_device.h
++++ b/ext/mbstring/libmbfl/mbfl/mbfl_memory_device.h
+@@ -41,6 +41,7 @@
+ 	size_t length;
+ 	size_t pos;
+ 	size_t allocsz;
++	int failed;
+ } mbfl_memory_device;
+ 
+ typedef struct _mbfl_wchar_device {
+@@ -52,7 +53,7 @@
+ 
+ MBFLAPI extern void mbfl_memory_device_init(
+ 		mbfl_memory_device *device, size_t initsz, size_t allocsz);
+-MBFLAPI extern void mbfl_memory_device_realloc(
++MBFLAPI extern int mbfl_memory_device_realloc(
+ 		mbfl_memory_device *device, size_t initsz, size_t allocsz);
+ MBFLAPI extern void mbfl_memory_device_clear(mbfl_memory_device *device);
+ MBFLAPI extern void mbfl_memory_device_reset(mbfl_memory_device *device);
+--- a/ext/mbstring/libmbfl/mbfl/mbfl_memory_device.c
++++ b/ext/mbstring/libmbfl/mbfl/mbfl_memory_device.c
+@@ -50,10 +50,13 @@
+ 	if (device) {
+ 		device->length = 0;
+ 		device->buffer = NULL;
++		device->failed = 0;
+ 		if (initsz > 0) {
+ 			device->buffer = (unsigned char *)mbfl_malloc(initsz);
+ 			if (device->buffer != NULL) {
+ 				device->length = initsz;
++			} else {
++				device->failed = 1;
+ 			}
+ 		}
+ 		device->pos = 0;
+@@ -65,25 +68,29 @@
+ 	}
+ }
+ 
+-void
++int
+ mbfl_memory_device_realloc(mbfl_memory_device *device, size_t initsz, size_t allocsz)
+ {
+ 	unsigned char *tmp;
+ 
+-	if (device) {
++	if (device && !device->failed) {
+ 		if (initsz > device->length) {
+ 			tmp = (unsigned char *)mbfl_realloc((void *)device->buffer, initsz);
+-			if (tmp != NULL) {
+-				device->buffer = tmp;
+-				device->length = initsz;
++			if (tmp == NULL) {
++				device->failed = 1;
++				return -1;
+ 			}
++			device->buffer = tmp;
++			device->length = initsz;
+ 		}
+ 		if (allocsz > MBFL_MEMORY_DEVICE_ALLOC_SIZE) {
+ 			device->allocsz = allocsz;
+ 		} else {
+ 			device->allocsz = MBFL_MEMORY_DEVICE_ALLOC_SIZE;
+ 		}
+-	}
++		return 0;
++	}
++	return -1;
+ }
+ 
+ void
+@@ -96,6 +103,7 @@
+ 		device->buffer = NULL;
+ 		device->length = 0;
+ 		device->pos = 0;
++		device->failed = 0;
+ 	}
+ }
+ 
+@@ -119,8 +127,19 @@
+ mbfl_memory_device_result(mbfl_memory_device *device, mbfl_string *result)
+ {
+ 	if (device && result) {
++		if (device->failed) {
++			mbfl_memory_device_clear(device);
++			result->val = NULL;
++			result->len = 0;
++			return NULL;
++		}
+ 		result->len = device->pos;
+-		mbfl_memory_device_output('\0', device);
++		if (mbfl_memory_device_output('\0', device) < 0) {
++			mbfl_memory_device_clear(device);
++			result->val = NULL;
++			result->len = 0;
++			return NULL;
++		}
+ 		result->val = device->buffer;
+ 		device->buffer = NULL;
+ 		device->length = 0;
+@@ -140,6 +159,9 @@
+ mbfl_memory_device_output(int c, void *data)
+ {
+ 	mbfl_memory_device *device = (mbfl_memory_device *)data;
++	if (device->failed) {
++		return -1;
++	}
+ 
+ 	if (device->pos >= device->length) {
+ 		/* reallocate buffer */
+@@ -148,12 +170,14 @@
+ 
+ 		if (device->length > SIZE_MAX - device->allocsz) {
+ 			/* overflow */
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 
+ 		newlen = device->length + device->allocsz;
+ 		tmp = (unsigned char *)mbfl_realloc((void *)device->buffer, newlen);
+ 		if (tmp == NULL) {
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 		device->length = newlen;
+@@ -168,6 +192,9 @@
+ mbfl_memory_device_output2(int c, void *data)
+ {
+ 	mbfl_memory_device *device = (mbfl_memory_device *)data;
++	if (device->failed) {
++		return -1;
++	}
+ 
+ 	if (2 > device->length - device->pos) {
+ 		/* reallocate buffer */
+@@ -176,12 +203,14 @@
+ 
+ 		if (device->length > SIZE_MAX - device->allocsz) {
+ 			/* overflow */
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 
+ 		newlen = device->length + device->allocsz;
+ 		tmp = (unsigned char *)mbfl_realloc((void *)device->buffer, newlen);
+ 		if (tmp == NULL) {
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 		device->length = newlen;
+@@ -198,6 +227,9 @@
+ mbfl_memory_device_output4(int c, void* data)
+ {
+ 	mbfl_memory_device *device = (mbfl_memory_device *)data;
++	if (device->failed) {
++		return -1;
++	}
+ 
+ 	if (4 > device->length - device->pos) {
+ 		/* reallocate buffer */
+@@ -206,12 +238,14 @@
+ 
+ 		if (device->length > SIZE_MAX - device->allocsz) {
+ 			/* overflow */
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 
+ 		newlen = device->length + device->allocsz;
+ 		tmp = (unsigned char *)mbfl_realloc((void *)device->buffer, newlen);
+ 		if (tmp == NULL) {
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 		device->length = newlen;
+@@ -236,6 +270,9 @@
+ mbfl_memory_device_strncat(mbfl_memory_device *device, const char *psrc, size_t len)
+ {
+ 	unsigned char *w;
++	if (device->failed) {
++		return -1;
++	}
+ 
+ 	if (len > device->length - device->pos) {
+ 		/* reallocate buffer */
+@@ -245,12 +282,14 @@
+ 		if (len > SIZE_MAX - MBFL_MEMORY_DEVICE_ALLOC_SIZE
+ 				|| device->length > SIZE_MAX - (len + MBFL_MEMORY_DEVICE_ALLOC_SIZE)) {
+ 			/* overflow */
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 
+ 		newlen = device->length + len + MBFL_MEMORY_DEVICE_ALLOC_SIZE;
+ 		tmp = (unsigned char *)mbfl_realloc((void *)device->buffer, newlen);
+ 		if (tmp == NULL) {
++			device->failed = 1;
+ 			return -1;
+ 		}
+ 
+--- a/ext/mbstring/libmbfl/mbfl/mbfl_convert.c
++++ b/ext/mbstring/libmbfl/mbfl/mbfl_convert.c
+@@ -251,7 +251,9 @@
+ int
+ mbfl_convert_filter_flush(mbfl_convert_filter *filter)
+ {
+-	(*filter->filter_flush)(filter);
++	if ((*filter->filter_flush)(filter) < 0) {
++		return -1;
++	}
+ 	return (filter->flush_function ? (*filter->flush_function)(filter->data) : 0);
+ }
+ 
+--- a/ext/mbstring/libmbfl/filters/mbfilter_qprint.c
++++ b/ext/mbstring/libmbfl/filters/mbfilter_qprint.c
+@@ -146,7 +146,9 @@
+ int mbfl_filt_conv_qprintenc_flush(mbfl_convert_filter *filter)
+ {
+ 	/* flush filter cache */
+-	(*filter->filter_function)('\0', filter);
++	if ((*filter->filter_function)('\0', filter) < 0) {
++		return -1;
++	}
+ 	filter->status &= ~0xffff;
+ 	filter->cache = 0;
+ 	return 0;
+--- a/ext/mbstring/libmbfl/mbfl/mbfilter.c
++++ b/ext/mbstring/libmbfl/mbfl/mbfilter.c
+@@ -266,7 +266,10 @@
+ 	if (convd == NULL || string == NULL) {
+ 		return -1;
+ 	}
+-	mbfl_memory_device_realloc(&convd->device, convd->device.pos + string->len, string->len/4);
++	if (string->len > SIZE_MAX - convd->device.pos ||
++		mbfl_memory_device_realloc(&convd->device, convd->device.pos + string->len, string->len/4) < 0) {
++		return -1;
++	}
+ 	/* feed data */
+ 	n = string->len;
+ 	p = string->val;
+@@ -299,10 +302,14 @@
+ 	}
+ 
+ 	if (convd->filter1 != NULL) {
+-		mbfl_convert_filter_flush(convd->filter1);
++		if (mbfl_convert_filter_flush(convd->filter1) < 0) {
++			return -1;
++		}
+ 	}
+ 	if (convd->filter2 != NULL) {
+-		mbfl_convert_filter_flush(convd->filter2);
++		if (mbfl_convert_filter_flush(convd->filter2) < 0) {
++			return -1;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -311,7 +318,8 @@
+ mbfl_string *
+ mbfl_buffer_converter_getbuffer(mbfl_buffer_converter *convd, mbfl_string *result)
+ {
+-	if (convd != NULL && result != NULL && convd->device.buffer != NULL) {
++	if (convd != NULL && result != NULL &&
++		!convd->device.failed && convd->device.buffer != NULL) {
+ 		result->encoding = convd->to;
+ 		result->val = convd->device.buffer;
+ 		result->len = convd->device.pos;
+@@ -339,12 +347,10 @@
+ 	if (convd == NULL || string == NULL || result == NULL) {
+ 		return NULL;
+ 	}
+-	mbfl_buffer_converter_feed(convd, string);
+-	if (convd->filter1 != NULL) {
+-		mbfl_convert_filter_flush(convd->filter1);
+-	}
+-	if (convd->filter2 != NULL) {
+-		mbfl_convert_filter_flush(convd->filter2);
++	if (mbfl_buffer_converter_feed(convd, string) < 0 ||
++		mbfl_buffer_converter_flush(convd) < 0) {
++		mbfl_memory_device_clear(&convd->device);
++		return NULL;
+ 	}
+ 	result->encoding = convd->to;
+ 	return mbfl_memory_device_result(&convd->device, result);
+@@ -551,20 +557,34 @@
+ 	if (p != NULL) {
+ 		while (n > 0) {
+ 			if ((*filter1->filter_function)(*p++, filter1) < 0) {
+-				break;
++				goto convert_failed;
+ 			}
+ 			n--;
+ 		}
+ 	}
+ 
+-	mbfl_convert_filter_flush(filter1);
++	if (mbfl_convert_filter_flush(filter1) < 0) {
++		goto convert_failed;
++	}
+ 	mbfl_convert_filter_delete(filter1);
+ 	if (filter2 != NULL) {
+-		mbfl_convert_filter_flush(filter2);
++		if (mbfl_convert_filter_flush(filter2) < 0) {
++			mbfl_convert_filter_delete(filter2);
++			mbfl_memory_device_clear(&device);
++			return NULL;
++		}
+ 		mbfl_convert_filter_delete(filter2);
+ 	}
+ 
+ 	return mbfl_memory_device_result(&device, result);
++
++convert_failed:
++	mbfl_convert_filter_delete(filter1);
++	if (filter2 != NULL) {
++		mbfl_convert_filter_delete(filter2);
++	}
++	mbfl_memory_device_clear(&device);
++	return NULL;
+ }
+ 
+ 
+@@ -1123,7 +1143,9 @@
+ 	}
+ 
+ 	if (pc->output >= pc->start) {
+-		(*pc->next_filter->filter_function)(c, pc->next_filter);
++		if ((*pc->next_filter->filter_function)(c, pc->next_filter) < 0) {
++			return -1;
++		}
+ 	}
+ 
+ 	pc->output++;
+@@ -1250,6 +1272,7 @@
+ 		if (decoder == NULL || encoder == NULL) {
+ 			mbfl_convert_filter_delete(encoder);
+ 			mbfl_convert_filter_delete(decoder);
++			mbfl_memory_device_clear(&device);
+ 			return NULL;
+ 		}
+ 		pc.next_filter = decoder;
+@@ -1269,9 +1292,14 @@
+ 			}
+ 		}
+ 
+-		mbfl_convert_filter_flush(encoder);
+-		mbfl_convert_filter_flush(decoder);
+-		result = mbfl_memory_device_result(&device, result);
++		if ((n > 0 && pc.output < pc.stop) ||
++			mbfl_convert_filter_flush(encoder) < 0 ||
++			mbfl_convert_filter_flush(decoder) < 0) {
++			mbfl_memory_device_clear(&device);
++			result = NULL;
++		} else {
++			result = mbfl_memory_device_result(&device, result);
++		}
+ 		mbfl_convert_filter_delete(encoder);
+ 		mbfl_convert_filter_delete(decoder);
+ 	}
+--- a/ext/mbstring/mbstring.c
++++ b/ext/mbstring/mbstring.c
+@@ -648,7 +648,7 @@
+ 
+ static void *_php_mb_allocators_realloc(void *ptr, size_t sz)
+ {
+-	return erealloc(ptr, sz);
++	return _safe_ferealloc(ptr, 1, sz, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
+ }
+ 
+ static void *_php_mb_allocators_calloc(size_t nelems, size_t szelem)
+@@ -967,7 +967,10 @@
+ 		return (size_t)-1;
+ 	}
+ 
+-	mbfl_buffer_converter_flush(convd);
++	if (mbfl_buffer_converter_flush(convd) < 0) {
++		mbfl_buffer_converter_delete(convd);
++		return (size_t)-1;
++	}
+ 	if (!mbfl_buffer_converter_result(convd, &result)) {
+ 		mbfl_buffer_converter_delete(convd);
+ 		return (size_t)-1;
+@@ -2287,12 +2290,18 @@
+ 	*/
+  	string.val = (unsigned char *)arg_string;
+  	string.len = arg_string_len;
+- 	mbfl_buffer_converter_feed(MBSTRG(outconv), &string);
+- 	if (last_feed) {
+- 		mbfl_buffer_converter_flush(MBSTRG(outconv));
++	if (mbfl_buffer_converter_feed(MBSTRG(outconv), &string) < 0 ||
++		(last_feed && mbfl_buffer_converter_flush(MBSTRG(outconv)) < 0)) {
++		mbfl_buffer_converter_delete(MBSTRG(outconv));
++		MBSTRG(outconv) = NULL;
++		return;
+ 	}
+  	/* get the converter output, and return it */
+- 	mbfl_buffer_converter_result(MBSTRG(outconv), &result);
++	if (!mbfl_buffer_converter_result(MBSTRG(outconv), &result)) {
++		mbfl_buffer_converter_delete(MBSTRG(outconv));
++		MBSTRG(outconv) = NULL;
++		return;
++	}
+ 	// TODO: avoid reallocation ???
+  	RETVAL_STRINGL((char *)result.val, result.len);		/* the string is already strdup()'ed */
+ 	efree(result.val);
