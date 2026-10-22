@@ -1,6 +1,6 @@
 # PHP 旧版バックポート 引き継ぎ
 
-更新日：2026-10-22（日本時間）
+更新日：2026-10-23（日本時間）
 
 ## 現在の状態
 
@@ -8,36 +8,40 @@
 
 追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。[PHP公式の検証済み Issue #24488](https://github.com/php/php-src/issues/24488)のSimpleXML/GC二重解放は8.4.27/8.5.12の別件回帰で、[公式修正コミット](https://github.com/php/php-src/commit/f963484)によりIssueは閉じられた。固定したPHP 5〜7最終版の元アーカイブ12件には原因となるGH-24050のGC追加処理がなく、[版別判定](notes/double-free-24488-triage.md)では直接該当しない。SNS画像との同一性や旧版固有の別経路は未判定。記事内のZIP・PoCは取得も実行もしていない。
 
-公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDFなどを移植・限定検証した。機械的な未変更・未判定リストは19件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDF、EXIFの再確保1箇所などを移植・限定検証した。機械的な未変更・未判定リストは18件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64クリーンビルドとApache/mod_php版別正常系・良性OOM検査を通過。XML SAX・JSON文字列復号・zlib・SimpleXML・iconv・XMLWriterの指定経路で良性OOM後の同一worker継続、3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認。XMLは前候補でlibxml/Expat両構成を検証 | 他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし dry-run 適用し、EXIF有効のLinux/amd64増分ビルドとApache/mod_php版別正常系・良性OOM検査を通過。直前候補はクリーンビルドを通過。XML SAX・JSON文字列復号・zlib・SimpleXML・iconv・XMLWriterの指定経路で良性OOM後の同一worker継続、3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認。XMLは前候補でlibxml/Expat両構成を検証 | 他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `19fc874524167fa322f87de7d43ddef59bc0067860351dcfe18e78e19642502e`。`/private/tmp/php-backport-73-fileinfo-clean/patch/7.3.33/` で固定ソースへfuzzなし適用し、tokenizer・fileinfo有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェックが `pass`。同じビルドで `token_get_all()` の通常・`TOKEN_PARSE` 両モードについて、8 MiB制限下のトークン文字列確保失敗、要求中断、同一worker継続を確認した。既存PowerPoint形式ファイルのCDF読取は `application/vnd.ms-powerpoint`。CDF解析中の割当失敗地点、他のトークン種別、全要求境界は未判定。前候補のExpat/libxml両構成の結果は別ハッシュでの実測。
+7.3.33 の現候補 SHA-256 は `e2dfbefbcc51a5c466554505af2d8c81bbf2c8d26e230bb0a0d480338c63c1b0`。EXIFを加える前の候補は `19fc874524167fa322f87de7d43ddef59bc0067860351dcfe18e78e19642502e`。直前候補を `/private/tmp/php-backport-73-fileinfo-clean/patch/7.3.33/` で固定ソースへfuzzなし適用し、tokenizer・fileinfo有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェックが `pass`。同じビルドで `token_get_all()` の通常・`TOKEN_PARSE` 両モードについて、8 MiB制限下のトークン文字列確保失敗、要求中断、同一worker継続を確認した。既存PowerPoint形式ファイルのCDF読取は `application/vnd.ms-powerpoint`。CDF解析中の割当失敗地点、他のトークン種別、全要求境界は未判定。前候補のExpat/libxml両構成の結果は別ハッシュでの実測。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
 前段の SPL 固定配列は、初期化・拡張時の確保失敗を呼び出し元に返し、縮小時は要素破棄後の再確保を避けるよう変更した。通常の `SplFixedArray::fromArray`・拡張・縮小・複製と、確保失敗後の同一ワーカー継続を確認した。複製・復元・各再確保地点の個別失敗は未判定。
 
-同じクリーンビルドで、通常セッション・multipart・upload progress、3保存形式、JSON復号と良性OOM、`unserialize` の許可クラス・長いキー、PCRE・ファイル・画像・文字列・配列の既存チェック、セッション復号OOM後の同一ワーカー継続を確認した。これは指定経路の結果であり、両CVEの全入口・要求間状態の遮断証明ではない。先行候補ごとのハッシュ、失敗地点と検査内容は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に移した。
+直前候補の同じクリーンビルドで、通常セッション・multipart・upload progress、3保存形式、JSON復号と良性OOM、`unserialize` の許可クラス・長いキー、PCRE・ファイル・画像・文字列・配列の既存チェック、セッション復号OOM後の同一ワーカー継続を確認した。これは指定経路の結果であり、両CVEの全入口・要求間状態の遮断証明ではない。先行候補ごとのハッシュ、失敗地点と検査内容は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に移した。
+
+7.3.33 の EXIF `exif_file_sections_realloc()` は、公式8.2.35と同様に確保失敗を `-1` で返すよう候補を変更した。固定済み元ソースへの fuzz なし dry-run は成功。最初のクリーンビルドは旧版に存在しない `safe_ferealloc` マクロを使ったためリンク失敗した。公開関数 `_safe_ferealloc` を使用するよう修正後、同じLinux/amd64ビルドで増分コンパイル・リンク成功。EXIFを有効にした Apache/mod_php で通常画像の `exif_read_data()` は `EXIF_OK`、既存の版別チェックも終了コード0で通過した。EXIF再確保失敗地点そのものと他のEXIF割当経路は未実測。今回の増分ビルドは最終パッチのクリーンビルド成功を示さない。結果は `/private/tmp/php-backport-73-exif-clean/`。
+
+5.6.40 の遅延OOMについて公式8.2.34→8.2.35の差分を再照合した。`zend_alloc.c` のhard limit・保留状態と、VM、関数呼出し、POST、主スクリプト境界が結合している。5.6にアロケータのみを移植する案は採用しない。5.6.40候補の実装・実測状態は前回から変わらない。
 
 ## 次の作業
 
-1. 7.3.33 の残る19ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の残る18ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
 
 公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
-ユーザーの今回の明示許可により `staticwebos-build` VM を正常停止し、`php-backport-lab` で7.3.33 クリーンビルド・検査を実施した。検証後、`php-backport-lab` は正常停止した。`staticwebos-build` はこの作業では再起動していない。
+ユーザーの明示許可により `staticwebos-build` VM を正常停止していた。今回も `php-backport-lab` で7.3.33 EXIF有効ビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
 GitHub への次回 push は保留。新しい eMudhra CA 信頼禁止規定について Git HTTPS の実際の検証経路で拒否を確認できず、GitHub SSH は `Permission denied (publickey)` だった。ローカルの変更は保持し、証明書検証または SSH 認証を満たす経路で送信する。
 

@@ -67,4 +67,5 @@ if [[ $version == 7.3.33 ]]; then
     bash "$script_dir/candidates/check-tokenizer-normal.sh" "$source_tree"
     bash "$script_dir/candidates/check-tokenizer-oom.sh" "$source_tree"
     bash "$script_dir/candidates/check-fileinfo-normal.sh" "$source_tree"
+    bash "$script_dir/candidates/check-exif-normal.sh" "$source_tree"
 fi

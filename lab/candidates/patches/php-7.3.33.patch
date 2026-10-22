@@ -6884,3 +6884,17 @@
  
  /*
   * swap a short
+--- a/ext/exif/exif.c
++++ b/ext/exif/exif.c
+@@ -2019,7 +2019,10 @@
+ 		EXIF_ERRLOG_FSREALLOC(ImageInfo)
+ 		return -1;
+ 	}
+-	tmp = safe_erealloc(ImageInfo->file.list[section_index].data, 1, size, 0);
++	tmp = _safe_ferealloc(ImageInfo->file.list[section_index].data, 1, size, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (!tmp) {
++		return -1;
++	}
+ 	ImageInfo->file.list[section_index].data = tmp;
+ 	ImageInfo->file.list[section_index].size = size;
+ 	return 0;
