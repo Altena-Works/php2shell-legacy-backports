@@ -5589,3 +5589,20 @@
  	RETURN_TRUE;
  }
  /* }}} */
+--- a/ext/curl/interface.c
++++ b/ext/curl/interface.c
+@@ -1548,7 +1548,13 @@
+ 			return fwrite(data, size, nmemb, t->fp);
+ 		case PHP_CURL_RETURN:
+ 			if (length > 0) {
+-				smart_str_appendl(&t->buf, data, (int) length);
++				if (UNEXPECTED(!smart_str_fappendl_ex(&t->buf, data, length, 0))) {
++#ifdef CURL_WRITEFUNC_ERROR
++					return CURL_WRITEFUNC_ERROR;
++#else
++					return 0;
++#endif
++				}
+ 			}
+ 			break;
+ 		case PHP_CURL_USER: {

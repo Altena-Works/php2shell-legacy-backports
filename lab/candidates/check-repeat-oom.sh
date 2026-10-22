@@ -28,6 +28,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-array-pad-array-limit.php:/var/www/html/normal-array-pad-array-limit.php:ro" \
     -v "$script_dir/normal-memory-stream-limit.php:/var/www/html/normal-memory-stream-limit.php:ro" \
     -v "$script_dir/normal-spl-fixedarray-limit.php:/var/www/html/normal-spl-fixedarray-limit.php:ro" \
+    -v "$script_dir/normal-curl-limit.php:/var/www/html/normal-curl-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -70,6 +71,22 @@ after_spl=$(podman exec "$container_id" curl -fsS --max-time 5 \
     printf 'Apache worker changed after SplFixedArray soft OOM\n' >&2; exit 1;
 }
 printf 'SPL_NORMAL_AND_OOM_REPORTED\n'
+
+normal_curl=$(podman exec "$container_id" curl -fsS --max-time 10 \
+    http://127.0.0.1/normal-curl-limit.php)
+[[ $normal_curl == CURL_OK ]] || { printf 'normal cURL failed: %s\n' "$normal_curl" >&2; exit 1; }
+podman exec "$container_id" curl -sS --max-time 30 \
+    -o /tmp/curl-limit.out 'http://127.0.0.1/normal-curl-limit.php?limit=1' >/dev/null
+curl_result=$(podman exec "$container_id" tail -c 500 /tmp/curl-limit.out)
+after_curl=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $curl_result == *READY* && $curl_result == *'Allowed memory size of 8388608 bytes exhausted'* && $curl_result != *RETURNED* ]] || {
+    printf 'expected cURL soft OOM and request abort missing: %s\n' "$curl_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_curl%%$'\n'*} ]] || {
+    printf 'Apache worker changed after cURL soft OOM\n' >&2; exit 1;
+}
+printf 'CURL_NORMAL_AND_OOM_REPORTED\n'
 
 normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-repeat-limit.php)

@@ -101,6 +101,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
         set -e
         if [ ! -f Makefile ]; then
             case "$PHP_MATRIX_VERSION" in
+                7.3.33) set -- --enable-json --enable-filter --enable-shmop --with-curl ;;
                 7.*) set -- --enable-json --enable-filter --enable-shmop ;;
                 *) set -- ;;
             esac
