@@ -13,14 +13,16 @@ PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件と�
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。`nl2br` の大型結果割当、`unpack` の繰り返し中断、`shmop_read` と Cookie ヘッダー値の割当失敗も確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。`nl2br` の大型結果割当、`unpack` の繰り返し中断、`shmop_read`・Cookie 値・HTML 変換の割当失敗も確認。`levenshtein` の旧版仕様を再確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 統合候補の現行差分 SHA-256 は `0e72c787fbfa72c65b4eede0f9623392948593a19497499dc3bc23b4411f8adc`。`/private/tmp/php-backport-73-cookie-clean/patch/7.3.33/` で固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成した `libphp7.so` の SHA-256 は `6bf76ed099e29562bef50d75fcbc6b41580138906c9cd7921dd7a24537e710d6`。3保存形式の通常セッション・multipart進捗、JSON、`array_chunk`・`array_map`・`array_pad`・`php://memory`・`nl2br`・`unpack` の正常系と良性OOM、upload progress 中のセッション復号OOM後の同一ワーカー継続を確認した。`shmop` を有効化したビルドで通常の読み書きと12MiB読み取り時の良性OOMを確認した。Cookie ヘッダーの通常設定と大型の生値を追加する際の良性OOMも確認し、いずれも同一ワーカーが継続した。**これらは指定構成・指定経路の検証であり、全入口・全拡張の遮断証明ではない。**
+7.3.33 統合候補の現行差分 SHA-256 は `95acbbb11ca1ad8e0f3b442396ffe8ce9abdd00b0c33ad8f3aef1845ec3a4abd`。`/private/tmp/php-backport-73-html-lev-clean-fixed/patch/7.3.33/` で固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成した `libphp7.so` の SHA-256 は `cd95741c5e85c951d6907e079e357316ca135845b9f39785952d9ebfabac5b60`。3保存形式の通常セッション・multipart進捗、JSON、`array_chunk`・`array_map`・`array_pad`・`php://memory`・`nl2br`・`unpack` の正常系と良性OOM、upload progress 中のセッション復号OOM後の同一ワーカー継続を確認した。`shmop` を有効化したビルドで通常の読み書きと12MiB読み取り時の良性OOMを確認した。Cookie ヘッダーの通常設定と大型の生値を追加する際の良性OOMも確認した。HTML 変換は初期確保と旧版固有の2つの再確保を失敗可能にし、通常変換と大型入力時の良性OOMを確認した。`levenshtein` は失敗可能な作業配列確保を追加し、通常値・重み付き値・旧版の長さ超過を確認した。OOM 後はいずれも同一ワーカーが継続した。HTML の再確保2地点と `levenshtein` の割当失敗を個別に発生させる動的検査は未実施。**これらは指定構成・指定経路の検証であり、全入口・全拡張の遮断証明ではない。**
+
+初回の HTML 修正では、OOM エラー表示自体が空文字列になり JSON の既存検査が失敗した。`ZEND_HAS_OOM()` が既に真の間は HTML 表示用の従来の割当を使うよう修正し、同一モジュールの増分ビルドと修正版のクリーンビルドで JSON エラー表示と同一ワーカー継続を再確認した。
 
 `str_repeat`・`str_pad`・`implode`・`chunk_split`・`wordwrap` の失敗可能割当は、`heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。`wordwrap` の途中の拡張・縮小も失敗可能な再割当へ変更し、失敗時に元の文字列を解放する。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理と `wordwrap` の旧版の引数エラー、結果拡張時の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。拡張・縮小の割当失敗を個別に発生させる動的検査は未実施。
 

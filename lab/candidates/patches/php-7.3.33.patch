@@ -1117,17 +1117,10 @@
  #define ZSTR_ALLOCA_ALLOC(str, _len, use_heap) do { \
  	(str) = (zend_string *)do_alloca(ZEND_MM_ALIGNED_SIZE_EX(_ZSTR_STRUCT_SIZE(_len), 8), (use_heap)); \
  	GC_SET_REFCOUNT(str, 1); \
-@@ -143,6 +146,21 @@
- {
- 	zend_string *ret = (zend_string *)safe_pemalloc(n, m, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)), persistent);
+@@ -150,6 +153,21 @@
+ 	return ret;
+ }
  
-+	GC_SET_REFCOUNT(ret, 1);
-+	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
-+	zend_string_forget_hash_val(ret);
-+	ZSTR_LEN(ret) = (n * m) + l;
-+	return ret;
-+}
-+
 +static zend_always_inline zend_string *zend_string_safe_falloc(size_t n, size_t m, size_t l, int persistent)
 +{
 +	zend_string *ret = persistent
@@ -1136,9 +1129,52 @@
 +	if (UNEXPECTED(ret == NULL)) {
 +		return NULL;
 +	}
- 	GC_SET_REFCOUNT(ret, 1);
- 	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
- 	zend_string_forget_hash_val(ret);
++	GC_SET_REFCOUNT(ret, 1);
++	GC_TYPE_INFO(ret) = IS_STRING | ((persistent ? IS_STR_PERSISTENT : 0) << GC_FLAGS_SHIFT);
++	zend_string_forget_hash_val(ret);
++	ZSTR_LEN(ret) = (n * m) + l;
++	return ret;
++}
++
+ static zend_always_inline zend_string *zend_string_init(const char *str, size_t len, int persistent)
+ {
+ 	zend_string *ret = zend_string_alloc(len, persistent);
+@@ -251,6 +269,35 @@
+ 		}
+ 	}
+ 	ret = zend_string_safe_alloc(n, m, l, persistent);
++	memcpy(ZSTR_VAL(ret), ZSTR_VAL(s), MIN((n * m) + l, ZSTR_LEN(s)) + 1);
++	if (!ZSTR_IS_INTERNED(s)) {
++		GC_DELREF(s);
++	}
++	return ret;
++}
++
++static zend_always_inline zend_string *zend_string_safe_frealloc(zend_string *s,
++	size_t n, size_t m, size_t l, int persistent)
++{
++	zend_string *ret;
++
++	if (persistent) {
++		return zend_string_safe_realloc(s, n, m, l, persistent);
++	}
++	if (!ZSTR_IS_INTERNED(s) && GC_REFCOUNT(s) == 1) {
++		ret = (zend_string *)_safe_ferealloc(s, n, m,
++			ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(l)) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		if (UNEXPECTED(!ret)) {
++			return NULL;
++		}
++		ZSTR_LEN(ret) = (n * m) + l;
++		zend_string_forget_hash_val(ret);
++		return ret;
++	}
++	ret = zend_string_safe_falloc(n, m, l, 0);
++	if (UNEXPECTED(!ret)) {
++		return NULL;
++	}
+ 	memcpy(ZSTR_VAL(ret), ZSTR_VAL(s), MIN((n * m) + l, ZSTR_LEN(s)) + 1);
+ 	if (!ZSTR_IS_INTERNED(s)) {
+ 		GC_DELREF(s);
 --- a/Zend/zend_strtod.c
 +++ b/Zend/zend_strtod.c
 @@ -600,7 +600,7 @@
@@ -4135,3 +4171,115 @@
  		}
  		if (expires > 0) {
  			const char *p;
+--- a/ext/standard/html.c
++++ b/ext/standard/html.c
+@@ -1266,7 +1266,10 @@
+ 		maxlen = zend_safe_addmult(oldlen, 2, 0, "html_entities");
+ 	}
+ 
+-	replaced = zend_string_alloc(maxlen, 0);
++	replaced = ZEND_HAS_OOM() ? zend_string_alloc(maxlen, 0) : zend_string_safe_falloc(maxlen, 1, 0, 0);
++	if (UNEXPECTED(!replaced)) {
++		return ZSTR_EMPTY_ALLOC();
++	}
+ 	len = 0;
+ 	cursor = 0;
+ 	while (cursor < oldlen) {
+@@ -1279,7 +1282,14 @@
+ 		/* guarantee we have at least 40 bytes to write.
+ 		 * In HTML5, entities may take up to 33 bytes */
+ 		if (len > maxlen - 40) { /* maxlen can never be smaller than 128 */
+-			replaced = zend_string_safe_realloc(replaced, maxlen, 1, 128, 0);
++			zend_string *grown = ZEND_HAS_OOM()
++				? zend_string_safe_realloc(replaced, maxlen, 1, 128, 0)
++				: zend_string_safe_frealloc(replaced, maxlen, 1, 128, 0);
++			if (UNEXPECTED(!grown)) {
++				zend_string_release(replaced);
++				return ZSTR_EMPTY_ALLOC();
++			}
++			replaced = grown;
+ 			maxlen += 128;
+ 		}
+ 
+@@ -1411,7 +1421,14 @@
+ 				/* at this point maxlen - len >= 40 */
+ 				if (maxlen - len < ent_len + 2 /* & and ; */) {
+ 					/* ent_len < oldlen, which is certainly <= SIZE_MAX/2 */
+-					replaced = zend_string_safe_realloc(replaced, maxlen, 1, ent_len + 128, 0);
++					zend_string *grown = ZEND_HAS_OOM()
++						? zend_string_safe_realloc(replaced, maxlen, 1, ent_len + 128, 0)
++						: zend_string_safe_frealloc(replaced, maxlen, 1, ent_len + 128, 0);
++					if (UNEXPECTED(!grown)) {
++						zend_string_release(replaced);
++						return ZSTR_EMPTY_ALLOC();
++					}
++					replaced = grown;
+ 					maxlen += ent_len + 128;
+ 				}
+ 				ZSTR_VAL(replaced)[len++] = '&';
+--- a/ext/standard/levenshtein.c
++++ b/ext/standard/levenshtein.c
+@@ -26,7 +26,7 @@
+ 
+ /* {{{ reference_levdist
+  * reference implementation, only optimized for memory usage, not speed */
+-static zend_long reference_levdist(const char *s1, size_t l1, const char *s2, size_t l2, zend_long cost_ins, zend_long cost_rep, zend_long cost_del )
++static zend_long reference_levdist(const char *s1, size_t l1, const char *s2, size_t l2, zend_long cost_ins, zend_long cost_rep, zend_long cost_del , zend_bool *oom)
+ {
+ 	zend_long *p1, *p2, *tmp;
+ 	zend_long c0, c1, c2;
+@@ -42,8 +42,17 @@
+ 	if ((l1 > LEVENSHTEIN_MAX_LENGTH) || (l2 > LEVENSHTEIN_MAX_LENGTH)) {
+ 		return -1;
+ 	}
+-	p1 = safe_emalloc((l2 + 1), sizeof(zend_long), 0);
+-	p2 = safe_emalloc((l2 + 1), sizeof(zend_long), 0);
++	p1 = _safe_femalloc((l2 + 1), sizeof(zend_long), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(!p1)) {
++		*oom = 1;
++		return -1;
++	}
++	p2 = _safe_femalloc((l2 + 1), sizeof(zend_long), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(!p2)) {
++		efree(p1);
++		*oom = 1;
++		return -1;
++	}
+ 
+ 	for (i2 = 0; i2 <= l2; i2++) {
+ 		p1[i2] = i2 * cost_ins;
+@@ -97,20 +106,21 @@
+ 	size_t str1_len, str2_len, callback_len;
+ 	zend_long cost_ins, cost_rep, cost_del;
+ 	zend_long distance = -1;
++	zend_bool oom = 0;
+ 
+ 	switch (argc) {
+ 		case 2: /* just two strings: use maximum performance version */
+ 			if (zend_parse_parameters(2, "ss", &str1, &str1_len, &str2, &str2_len) == FAILURE) {
+ 				return;
+ 			}
+-			distance = reference_levdist(str1, str1_len, str2, str2_len, 1, 1, 1);
++			distance = reference_levdist(str1, str1_len, str2, str2_len, 1, 1, 1, &oom);
+ 			break;
+ 
+ 		case 5: /* more general version: calc cost by ins/rep/del weights */
+ 			if (zend_parse_parameters(5, "sslll", &str1, &str1_len, &str2, &str2_len, &cost_ins, &cost_rep, &cost_del) == FAILURE) {
+ 				return;
+ 			}
+-			distance = reference_levdist(str1, str1_len, str2, str2_len, cost_ins, cost_rep, cost_del);
++			distance = reference_levdist(str1, str1_len, str2, str2_len, cost_ins, cost_rep, cost_del, &oom);
+ 			break;
+ 
+ 		case 3: /* most general version: calc cost by user-supplied function */
+@@ -122,6 +132,10 @@
+ 
+ 		default:
+ 			WRONG_PARAM_COUNT;
++	}
++
++	if (UNEXPECTED(oom)) {
++		RETURN_OOM();
+ 	}
+ 
+ 	if (distance < 0 && /* TODO */ ZEND_NUM_ARGS() != 3) {
