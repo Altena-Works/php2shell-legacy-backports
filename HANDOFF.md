@@ -13,14 +13,16 @@ PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件と�
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。SPL と cURL 受信バッファの確保失敗処理、通常操作と良性OOM後のワーカー継続を追加確認。`nl2br`・`unpack`・`shmop_read`・Cookie・HTML・`preg_replace` などの指定経路も検査 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。SPL、cURL、zlib の指定経路で通常動作と良性OOM後のワーカー継続を追加確認。`nl2br`・`unpack`・`shmop_read`・Cookie・HTML・`preg_replace` などの指定経路も検査 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返すよう変更した。ラボの 7.3.33 ビルドは cURL を有効化。現行候補 SHA-256 は `ee99ca5958b50e4b55f9c68b935fc9ccc685fbc1cd8fdff0eac990bf7ba8a9c3`。`/private/tmp/php-backport-73-curl-clean/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `fbd15f2454bb2e630fe97a49b344ea71c68267f982bbf0362fe89f92b7993508`。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
+7.3.33 の zlib は、圧縮・展開バッファの初期確保と拡張を失敗可能にし、失敗時に保有バッファを解放して中断する。ラボの 7.3.33 ビルドは cURL と zlib を有効化。現行候補 SHA-256 は `3f08c652c0310837ec47180ca7e3d127a2631b36d8ac6db002b069d611536ecb`。`/private/tmp/php-backport-73-zlib-clean/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `f90a38d4ec2051a50fe57b20e5ee43c7d74acc8084c1b69a14ef7d765396a1a5`。通常の gzip 読み書きと逐次展開・一括展開中の良性OOM後の同一ワーカー継続を確認した。一括展開は同じビルドに対する追加チェック `/private/tmp/php-backport-73-zlib-decode-focused.log` で通過。zlib 内の各失敗地点やフィルターの経路は未判定。
+
+前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
 前段の SPL 固定配列は、初期化・拡張時の確保失敗を呼び出し元に返し、縮小時は要素破棄後の再確保を避けるよう変更した。通常の `SplFixedArray::fromArray`・拡張・縮小・複製と、確保失敗後の同一ワーカー継続を確認した。複製・復元・各再確保地点の個別失敗は未判定。
 
@@ -43,4 +45,5 @@ GitHub への次回 push は保留。新しい eMudhra CA 信頼禁止規定に�
 - [検証ラボ](lab/README.md)
 - [5.6.40 の版別調査](notes/php-5.6.40.md)
 - [遮断範囲の監査](notes/coverage-audit-2026-10-22.md)
+- [残課題の棚卸し](notes/remaining-work-2026-10-22.md)
 - [前回までの詳細記録](archive/HANDOFF-2026-10-22-before-fallible.md)

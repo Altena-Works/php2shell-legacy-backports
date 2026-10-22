@@ -5606,3 +5606,122 @@
  			}
  			break;
  		case PHP_CURL_USER: {
+--- a/ext/zlib/zlib.c
++++ b/ext/zlib/zlib.c
+@@ -344,7 +344,11 @@
+ 	Z.zfree = php_zlib_free;
+ 
+ 	if (Z_OK == (status = deflateInit2(&Z, level, Z_DEFLATED, encoding, MAX_MEM_LEVEL, Z_DEFAULT_STRATEGY))) {
+-		out = zend_string_alloc(PHP_ZLIB_BUFFER_SIZE_GUESS(in_len), 0);
++		out = zend_string_safe_falloc(1, PHP_ZLIB_BUFFER_SIZE_GUESS(in_len), 0, 0);
++		if (UNEXPECTED(!out)) {
++			deflateEnd(&Z);
++			return NULL;
++		}
+ 
+ 		Z.next_in = (Bytef *) in_buf;
+ 		Z.next_out = (Bytef *) ZSTR_VAL(out);
+@@ -381,7 +385,7 @@
+ 	buffer.size = (max && (max < Z->avail_in)) ? max : Z->avail_in;
+ 
+ 	do {
+-		if ((max && (max <= buffer.used)) || !(buffer.aptr = erealloc_recoverable(buffer.data, buffer.size))) {
++		if ((max && (max <= buffer.used)) || !(buffer.aptr = _safe_ferealloc(buffer.data, 1, buffer.size, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC))) {
+ 			status = Z_MEM_ERROR;
+ 		} else {
+ 			buffer.data = buffer.aptr;
+@@ -591,6 +595,10 @@
+ 	memset(buf, 0, sizeof(buf));
+ 
+ 	while (php_stream_gets(stream, buf, sizeof(buf) - 1) != NULL) {
++		if (UNEXPECTED(ZEND_HAS_OOM())) {
++			php_stream_close(stream);
++			RETURN_OOM();
++		}
+ 		add_index_string(return_value, i++, buf);
+ 	}
+ 	php_stream_close(stream);
+@@ -899,6 +907,19 @@
+ }
+ /* }}} */
+ 
++static zend_bool php_zlib_inflate_grow(zend_string **out, size_t buffer_used, size_t chunk_size, z_stream *ctx)
++{
++	zend_string *grown = zend_string_safe_frealloc(*out, 1, ZSTR_LEN(*out) + chunk_size, 0, 0);
++	if (UNEXPECTED(!grown)) {
++		zend_string_release_ex(*out, 0);
++		return 0;
++	}
++	*out = grown;
++	ctx->avail_out = chunk_size;
++	ctx->next_out = (Bytef *) ZSTR_VAL(grown) + buffer_used;
++	return 1;
++}
++
+ /* {{{ proto string inflate_add(resource context, string encoded_data[, int flush_mode = ZLIB_SYNC_FLUSH])
+    Incrementally inflate encoded data in the specified context */
+ PHP_FUNCTION(inflate_add)
+@@ -946,7 +967,10 @@
+ 		RETURN_EMPTY_STRING();
+ 	}
+ 
+-	out = zend_string_alloc((in_len > CHUNK_SIZE) ? in_len : CHUNK_SIZE, 0);
++	out = zend_string_safe_falloc(1, (in_len > CHUNK_SIZE) ? in_len : CHUNK_SIZE, 0, 0);
++	if (UNEXPECTED(!out)) {
++		RETURN_OOM();
++	}
+ 	ctx->next_in = (Bytef *) in_buf;
+ 	ctx->next_out = (Bytef *) ZSTR_VAL(out);
+ 	ctx->avail_in = in_len;
+@@ -962,9 +986,9 @@
+ 			case Z_OK:
+ 				if (ctx->avail_out == 0) {
+ 					/* more output buffer space needed; realloc and try again */
+-					out = zend_string_realloc(out, ZSTR_LEN(out) + CHUNK_SIZE, 0);
+-					ctx->avail_out = CHUNK_SIZE;
+-					ctx->next_out = (Bytef *) ZSTR_VAL(out) + buffer_used;
++					if (UNEXPECTED(!php_zlib_inflate_grow(&out, buffer_used, CHUNK_SIZE, ctx))) {
++						RETURN_OOM();
++					}
+ 					break;
+ 				} else {
+ 					goto complete;
+@@ -974,9 +998,9 @@
+ 			case Z_BUF_ERROR:
+ 				if (flush_type == Z_FINISH && ctx->avail_out == 0) {
+ 					/* more output buffer space needed; realloc and try again */
+-					out = zend_string_realloc(out, ZSTR_LEN(out) + CHUNK_SIZE, 0);
+-					ctx->avail_out = CHUNK_SIZE;
+-					ctx->next_out = (Bytef *) ZSTR_VAL(out) + buffer_used;
++					if (UNEXPECTED(!php_zlib_inflate_grow(&out, buffer_used, CHUNK_SIZE, ctx))) {
++						RETURN_OOM();
++					}
+ 					break;
+ 				} else {
+ 					/* No more input data; we're finished */
+@@ -1202,7 +1226,10 @@
+ 
+ 	out_size = PHP_ZLIB_BUFFER_SIZE_GUESS(in_len);
+ 	out_size = (out_size < 64) ? 64 : out_size;
+-	out = zend_string_alloc(out_size, 0);
++	out = zend_string_safe_falloc(1, out_size, 0, 0);
++	if (UNEXPECTED(!out)) {
++		RETURN_OOM();
++	}
+ 
+ 	ctx->next_in = (Bytef *) in_buf;
+ 	ctx->next_out = (Bytef *) ZSTR_VAL(out);
+@@ -1215,7 +1242,12 @@
+ 		if (ctx->avail_out == 0) {
+ 			/* more output buffer space needed; realloc and try again */
+ 			/* adding 64 more bytes solved every issue I have seen    */
+-			out = zend_string_realloc(out, ZSTR_LEN(out) + 64, 0);
++			zend_string *grown = zend_string_safe_frealloc(out, 1, ZSTR_LEN(out) + 64, 0, 0);
++			if (UNEXPECTED(!grown)) {
++				zend_string_release_ex(out, 0);
++				RETURN_OOM();
++			}
++			out = grown;
+ 			ctx->avail_out = 64;
+ 			ctx->next_out = (Bytef *) ZSTR_VAL(out) + buffer_used;
+ 		}
