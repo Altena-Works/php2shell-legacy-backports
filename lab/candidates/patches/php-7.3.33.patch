@@ -8055,3 +8055,69 @@
      {
        gdFree (wbmp);
        return (-1);
+--- a/ext/imap/php_imap.c
++++ b/ext/imap/php_imap.c
+@@ -4369,7 +4369,7 @@
+ 
+ 	charset = (char *) safe_emalloc((end + 1), 2, 0);
+ 	text = &charset[end + 1];
+-	while (offset < end) {	/* Reached end of the string? */
++	while (offset < end && EXPECTED(!ZEND_HAS_OOM())) {	/* Reached end of the string? */
+ 		if ((charset_token = (zend_long)php_memnstr(&string[offset], "=?", 2, string + end))) {	/* Is there anything encoded in the string? */
+ 			charset_token -= (zend_long)string;
+ 			if (offset != charset_token) {	/* Is there anything before the encoded data? */
+--- a/ext/intl/converter/converter.c
++++ b/ext/intl/converter/converter.c
+@@ -678,7 +678,10 @@
+ 		THROW_UFAILURE(objval, "ucnv_toUChars", error);
+ 		return NULL;
+ 	}
+-	temp = safe_emalloc(sizeof(UChar), temp_len, sizeof(UChar));
++	temp = _safe_femalloc(sizeof(UChar), temp_len, sizeof(UChar) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(!temp)) {
++		return NULL;
++	}
+ 
+ 	/* Convert to intermediate UChar* array */
+ 	error = U_ZERO_ERROR;
+@@ -698,7 +701,11 @@
+ 		return NULL;
+ 	}
+ 
+-	ret = zend_string_alloc(ret_len, 0);
++	ret = zend_string_safe_falloc(1, ret_len, 0, 0);
++	if (UNEXPECTED(!ret)) {
++		efree(temp);
++		return NULL;
++	}
+ 
+ 	/* Convert to final encoding */
+ 	error = U_ZERO_ERROR;
+--- a/ext/intl/normalizer/normalizer_normalize.c
++++ b/ext/intl/normalizer/normalizer_normalize.c
+@@ -181,7 +181,11 @@
+ 
+ 	/* Allocate memory for the destination buffer for normalization */
+ 	uret_len = uinput_len * expansion_factor;
+-	uret_buf = eumalloc( uret_len + 1 );
++	uret_buf = _safe_femalloc(uret_len + 1, sizeof(UChar), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(!uret_buf)) {
++		efree(uinput);
++		RETURN_FALSE;
++	}
+ 
+ 	/* normalize */
+ #if U_ICU_VERSION_MAJOR_NUM < 56
+@@ -205,7 +209,11 @@
+ 		 * uret_buf =  eurealloc(uret_buf, size_needed + 1);
+ 		 */
+ 		efree( uret_buf );
+-		uret_buf = eumalloc( size_needed + 1 );
++		uret_buf = _safe_femalloc(size_needed + 1, sizeof(UChar), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		if (UNEXPECTED(!uret_buf)) {
++			efree(uinput);
++			RETURN_FALSE;
++		}
+ 		uret_len = size_needed;
+ 
+ 		status = U_ZERO_ERROR;
