@@ -17,6 +17,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-array-chunk-limit.php:/var/www/html/normal-array-chunk-limit.php:ro" \
     -v "$script_dir/normal-array-map-limit.php:/var/www/html/normal-array-map-limit.php:ro" \
     -v "$script_dir/normal-array-pad-array-limit.php:/var/www/html/normal-array-pad-array-limit.php:ro" \
+    -v "$script_dir/normal-memory-stream-limit.php:/var/www/html/normal-memory-stream-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -77,6 +78,9 @@ normal_array_map=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_array_pad=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-array-pad-array-limit.php)
 [[ $normal_array_pad == ARRAY_PAD_ARRAY_OK ]] || { printf 'normal array_pad failed: %s\n' "$normal_array_pad" >&2; exit 1; }
+normal_memory_stream=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-memory-stream-limit.php)
+[[ $normal_memory_stream == MEMORY_STREAM_OK ]] || { printf 'normal memory stream failed: %s\n' "$normal_memory_stream" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -264,4 +268,21 @@ for pad_case in packed_positive packed_negative mixed_positive mixed_negative; d
         printf 'Apache worker changed after %s array_pad soft OOM\n' "$pad_case" >&2; exit 1;
     }
 done
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED ARRAY_FILL_NORMAL_OK ARRAY_FILL_PACKED_OOM_REPORTED ARRAY_FILL_MIXED_OOM_REPORTED RANGE_NORMAL_OK RANGE_LONG_OOM_REPORTED RANGE_DOUBLE_OOM_REPORTED ARRAY_CHUNK_NORMAL_OK ARRAY_CHUNK_OUTER_OOM_REPORTED ARRAY_CHUNK_INNER_OOM_REPORTED ARRAY_MAP_NORMAL_OK ARRAY_MAP_OUTER_OOM_REPORTED ARRAY_MAP_INNER_OOM_REPORTED ARRAY_PAD_ARRAY_NORMAL_OK ARRAY_PAD_ARRAY_PACKED_OOM_REPORTED ARRAY_PAD_ARRAY_MIXED_OOM_REPORTED WORKER_REUSED
+for memory_case in write truncate; do
+    memory_url='http://127.0.0.1/normal-memory-stream-limit.php?limit=1'
+    if [[ $memory_case == truncate ]]; then
+        memory_url+='&truncate=1'
+    fi
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/memory-stream-limit.out "$memory_url" >/dev/null
+    memory_result=$(podman exec "$container_id" tail -c 500 /tmp/memory-stream-limit.out)
+    after_memory=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $memory_result == *READY* && $memory_result == *'Allowed memory size of 8388608 bytes exhausted'* && $memory_result != *RETURNED* ]] || {
+        printf 'expected %s memory stream soft OOM and request abort missing: %s\n' "$memory_case" "$memory_result" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_memory%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s memory stream soft OOM\n' "$memory_case" >&2; exit 1;
+    }
+done
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED ARRAY_FILL_NORMAL_OK ARRAY_FILL_PACKED_OOM_REPORTED ARRAY_FILL_MIXED_OOM_REPORTED RANGE_NORMAL_OK RANGE_LONG_OOM_REPORTED RANGE_DOUBLE_OOM_REPORTED ARRAY_CHUNK_NORMAL_OK ARRAY_CHUNK_OUTER_OOM_REPORTED ARRAY_CHUNK_INNER_OOM_REPORTED ARRAY_MAP_NORMAL_OK ARRAY_MAP_OUTER_OOM_REPORTED ARRAY_MAP_INNER_OOM_REPORTED ARRAY_PAD_ARRAY_NORMAL_OK ARRAY_PAD_ARRAY_PACKED_OOM_REPORTED ARRAY_PAD_ARRAY_MIXED_OOM_REPORTED MEMORY_STREAM_NORMAL_OK MEMORY_STREAM_WRITE_OOM_REPORTED MEMORY_STREAM_TRUNCATE_OOM_REPORTED WORKER_REUSED

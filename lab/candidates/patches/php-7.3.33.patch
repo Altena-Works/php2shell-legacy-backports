@@ -3971,3 +3971,40 @@
  			array_init_size(&chunk, (uint32_t)size);
  		}
  
+--- a/main/streams/memory.c
++++ b/main/streams/memory.c
+@@ -54,12 +54,19 @@
+ 	} else if (ms->mode & TEMP_STREAM_APPEND) {
+ 		ms->fpos = ms->fsize;
+ 	}
++	if (UNEXPECTED(count > SIZE_MAX - ms->fpos)) {
++		zend_mm_delayed_error("Possible integer overflow in memory stream write");
++		return 0;
++	}
+ 	if (ms->fpos + count > ms->fsize) {
+ 		char *tmp;
+ 		if (!ms->data) {
+-			tmp = emalloc(ms->fpos + count);
++			tmp = _femalloc(ms->fpos + count ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
+ 		} else {
+-			tmp = erealloc(ms->data, ms->fpos + count);
++			tmp = _safe_ferealloc(ms->data, 1, ms->fpos + count, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		}
++		if (UNEXPECTED(!tmp)) {
++			return 0;
+ 		}
+ 		ms->data = tmp;
+ 		ms->fsize = ms->fpos + count;
+@@ -249,7 +256,11 @@
+ 							ms->fpos = newsize;
+ 						}
+ 					} else {
+-						ms->data = erealloc(ms->data, newsize);
++						char *grown = _safe_ferealloc(ms->data, 1, newsize, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++						if (UNEXPECTED(!grown)) {
++							return PHP_STREAM_OPTION_RETURN_ERR;
++						}
++						ms->data = grown;
+ 						memset(ms->data+ms->fsize, 0, newsize - ms->fsize);
+ 						ms->fsize = newsize;
+ 					}
