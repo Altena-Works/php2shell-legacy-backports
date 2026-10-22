@@ -1,27 +1,19 @@
-# 未検証の作業候補
+# PHP 旧版の作業候補
 
-7.3.33 の統合候補には、遅延 OOM 中断、主要文字列関数と `nl2br` の失敗可能な割当、`unpack`・`explode` と upload progress の OOM 保留確認、`array_fill`・`range`・`array_chunk`・複数配列の `array_map`・`array_pad` の失敗可能な初期化、`php://memory` の失敗可能な拡張、`shmop_read` の失敗可能な割当、Cookie ヘッダー値の失敗可能な拡張、HTML 変換の失敗可能な確保と再確保、`levenshtein` の失敗可能な作業配列確保、`file()`・CSV・XBM の OOM 中断、`fgets` の失敗可能なコピー、SWF の失敗可能な再確保、JSON パーサの失敗可能な生成と保留 OOM 中断、`unserialize` の失敗可能な文字列生成・クラス検索用小文字名、`preg_replace`・コールバック置換の失敗可能な結果バッファ確保・再確保、マッチ結果構築と分割反復中の保留OOM検知を含めました。保存モジュールの open・ID生成・read の失敗分岐を守り、multipart 終了時には配列分離・更新後に `bytes_processed` バケットを引き直します。現行パッチ SHA-256 は `946e6b8c3a5573376bc9336405174a268cf8fbc7b85de1c5a07c3c90fca6df90`。固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `/private/tmp/php-backport-73-unserialize-lookup-clean/patch/7.3.33/` で `pass`。通常のセッション・multipart・進捗、JSON・配列関数・メモリストリーム・`nl2br`・`unpack`・`shmop_read`・Cookie ヘッダー・HTML 変換の正常系と良性OOM後の同一ワーカー継続を確認しました。`levenshtein` の通常値と旧版の長さ制限、`file()`・`fgets()`・CSV・XBM・JSON復号の正常系も確認しました。大きな JSON 配列とセッション復号中の良性 OOM 後も同一ワーカーが継続しました。許可クラス・不完全クラス・長いキー・無害なクラス定義コールバックの通常復号、`preg_replace`・コールバック置換の通常動作、`preg_replace` と `preg_match_all` の良性OOM後の同一ワーカー継続、`preg_match`・`preg_match_all`・`preg_split` の通常動作も確認しました。追加の分岐別検査では、名前付き・オフセット付き結果、集合順、区切り捕捉の通常動作と、PCREの4分岐で良性OOM後の同一ワーカー継続を確認しました。OOM 報告中の HTML 表示では従来の割当を使い、エラー文を保持します。他の大型割当・再割当、OOM の厳密な発生地点、両 CVE の全経路遮断は未確認です。
+ここにあるパッチは公式修正を旧版へ移す**開発中の候補**です。`patches/` の配布用パッチとして導入しないでください。CVE-2026-109618 / CVE-2026-109619 の全経路遮断は、どの版でも未確認です。
 
-`patches/php-5.6.40.patch` は 5.6.40 機能維持候補を並列検証用に単一化した差分です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドし、Apache/mod_php の通常セッション・multipart・進捗、3 種類の保存形式、参照値、ファイルなし投稿を確認しました。その後、割当上限の桁あふれ防止を追加して fuzz なし dry-run、増分ビルドと同じ正常系を再確認しました。現行候補の SHA-256 は `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f` です。追加変更後のクリーンビルド、両 CVE の全経路遮断と soft OOM 後の同一ワーカー継続は未確認です。配布用 `patches/` へは昇格していません。
+| 版 | 現行候補 | 確認済み | 未完了 |
+| --- | --- | --- | --- |
+| 7.3.33 | [統合パッチ](patches/php-7.3.33.patch) (`a3bc4061fa7186980400220cdba03fa0e6e102a6a217aba71a50dd0f1a79fa6f`) | 固定元ソースへのfuzzなし適用、Linux x86_64・Apache/mod_phpのクリーンビルド、版別正常系と指定した良性OOM検査 | 残る公式差分、upload progressの全要求境界、mbstringのlibmbfl・HTTP入力経路など |
+| 5.6.40 | [統合パッチ](patches/php-5.6.40.patch) (`f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f`) | 固定元ソースへのfuzzなし適用、先行候補のクリーンビルド、追加修正後の増分ビルドと通常セッション・multipart | 遅延OOM、soft OOM後のワーカー継続、追加修正後のクリーンビルド |
 
-`php-5.6.40-late-error.patch` は、既存の緊急差分に、post-RSHUTDOWN 後の `last_error_message`・`last_error_file` 消去を加えた合成差分です。PHP 5.6.40 の元アーカイブへ fuzz なしで適用し、Linux/amd64・Apache/mod_php でクリーンビルド、通常セッション・multipart、進捗停止を確認しました。後処理診断による残存状態と両 CVE の全経路は未検証です。配布用 `patches/` には移していません。
+7.3.33の最新のクリーンビルドと版別検査の記録は `/private/tmp/php-backport-73-mbstring-clean/patch/7.3.33/`。この実測では通常のmbstring入力変換・文字コード変換・正規表現置換、ならびに低メモリ下での良性入力変換と通常置換のOOM報告・同一ワーカー継続も確認しました。個々の確保失敗地点や未搭載拡張まで確認した結果ではありません。
 
-`php-5.6.40-session-preserving.patch` は、上記の緊急差分を土台に、早期の upload progress 更新中だけ保存済みオブジェクトを不完全クラスとして復号し、`Serializable` の元ペイロードを再保存する**開発途中の差分**です。multipart 開始時にセッション状態を初期化し、保存先の初期化・読取失敗時は進捗更新を止めます。既存の進捗キーが参照値なら、旧版のシンボル更新が値を移した先へ進捗側の `zval *` を付け替え、旧版の参照関係も保ちます。通常の `serialize()` と通常のセッション読取失敗の扱いは維持します。元アーカイブへの fuzz なし適用、Linux/amd64・Apache/mod_php のクリーンビルド後の増分コンパイル、通常の multipart・upload progress、無害な `Serializable` 値の維持を確認しました。[早期失敗検査](check-session-init-failure.sh)では無効な保存先で警告が記録され、通常のアップロードと同じワーカーの後続要求が成功しました。[参照値検査](check-reference-progress.sh)では進捗と別キーの参照関係を確認しました。[保存形式検査](check-session-formats.sh)では `php`・`php_binary`・`php_serialize` で無害な `Serializable` 値、通常 multipart、進捗記録を確認しました。両 CVE の遮断、OOM 後のワーカー回復、保存形式の異常系や他のデータ型は未検証です。配布用 `patches/` には移していません。
+```bash
+bash lab/run-matrix.sh --versions 7.3.33 --jobs 1 \
+  --patch-dir "$PWD/lab/candidates/patches" \
+  --check-dir "$PWD/lab/candidates/checks" \
+  --results-dir /private/tmp/php-backport-check
+```
 
-ファイルなし multipart の終了時に未作成の進捗データを更新しない条件を追加しました。[回帰検査](check-no-file-progress.sh)では修正前の接続断、修正後の通常投稿・既存セッション維持を確認し、ファイルありの進捗記録も再確認しました。全入口の遮断判定ではありません。
-
-公式 8.2.35 の早期 RINIT 境界に合わせ、通常のモジュール RINIT より前に basic のシリアライズ状態と URL リライター状態をリセットします。元ソースへの fuzz なし適用、Linux/amd64・Apache/mod_php の増分ビルド、3種類のセッション保存形式での通常投稿・進捗・既存値維持、ファイルなし投稿を確認しました。前リクエストの異常終了状態を人工的に作る検査や全経路遮断の判定は未実施です。
-
-`php-7.3.33-session-preserving.patch` は、PHP 7.3.33 の元アーカイブに対し既存の緊急変更と upload progress の機能維持案を合わせた**開発途中の差分**です。fuzz なしの適用、Linux/amd64・Apache/mod_php のビルドと起動、通常の multipart・upload progress、無害な `Serializable` 値のセッション維持を確認しました。確認したのはこの正常系のみです。保存済みセッション形式全般の互換性、OOM 後の挙動、2 件の CVE の遮断は未検証です。導入用には `patches/` の版別パッチを使い、この候補を配布済みの修正として扱わないでください。
-
-同候補に、公式 8.2.35 の basic/URL リライター早期要求リセットを移植しました。固定済み公式アーカイブから展開した元ソースへ fuzz なしで適用でき、続く遅延 OOM 実験差分も fuzz なしで適用できます。Linux/amd64・Apache/mod_php の増分ビルド、通常セッション・multipart・進捗と無害な `Serializable` 値の維持を確認しました。異常終了後の残存状態を動的に再現した検査ではありません。
-
-`php-7.3.33-delayed-oom.experimental.patch` は統合前の旧実験差分です。現在の統合候補には遅延 OOM、JSON 中断、`str_repeat`・`str_pad`・`implode`・`chunk_split`・`wordwrap` 用の失敗可能割当が含まれるため、この旧差分を重ねません。**2件の CVE の全入口・例外経路、他の設定や保存形式の互換性は未検証です。配布・導入用パッチではありません。**
-
-統合した実験用の単一差分は [patches/php-7.3.33.patch](patches/php-7.3.33.patch) です。固定済み公式アーカイブから `lab/run-matrix.sh` で fuzz なし適用・クリーンビルドを行い、Apache/mod_php の通常セッション・multipart・進捗・`Serializable` 値維持を確認しました。同じビルドで良性の通常 soft OOM と配列復号中の soft OOM が報告され、同じワーカーが次要求を処理しました。**この結果は両 CVE の完全遮断を示さず、`patches/` の配布用差分へ昇格していません。**
-
-`checks/5.6.40.sh` と `checks/7.3.33.sh` は候補専用の正常系確認です。通常の multipart/upload progress と、既存セッション内の無害な `Serializable` 値が更新後も読めることを確認します。脆弱性の遮断を証明するテストではありません。`lab/run-matrix.sh` の `--patch-dir` / `--check-dir` には、候補を版名に合わせて配置した一時ディレクトリを渡します。チェックはリポジトリ内の良性フィクスチャを読むため、一時ディレクトリへはコピーせずシンボリックリンクで配置します。既存の検証結果と混ざらない新しい `--results-dir` を指定してください。
-
-7.3.33 の版別確認では、通常の multipart 終了後に進捗の `done=true` と `bytes_processed=content_length` も確かめます。前候補は Linux/amd64・Apache/mod_php で通過しました。これは最終進捗の正常動作を示す検査であり、OOM や異常終了時の両 CVE の遮断証明ではありません。現行候補では 8.2.34→8.2.35 の `ext/standard/array.c` 差分のうち `array_fill`・`range`・`array_chunk`・複数配列の `array_map` に加え、`array_pad` の事前確保を移植しました。後者は公式の挿入ごとの失敗処理と実装が異なるため、等価性を未確認として扱います。
-
-2026-10-22 の追加差分では、公式 8.2.35 と同じ終了境界で、post-RSHUTDOWN 後に再設定され得る `last_error_message` と `last_error_file` をメモリ管理終了前に消去します。変更した `main/main.c` は既存の Linux/amd64 ビルド木で増分コンパイルし、上記の正常系を再実行して通過しました。後処理中の診断を動的に起こした確認や、CVE-2026-109619 の全入口の遮断確認は未実施です。
+実行には、[検証ラボ](../README.md)に記載したローカルVM、固定した元アーカイブ、ビルダーが必要です。既存の結果と混ざらない `--results-dir` を指定してください。版別の残課題と先行候補の検査履歴は[HANDOFF](../../HANDOFF.md)と[検証履歴](../../archive/HANDOFF-2026-10-22-path-verification.md)を参照してください。

@@ -7391,3 +7391,58 @@
  
  	encode_finish();
  
+--- a/ext/mbstring/mb_gpc.c
++++ b/ext/mbstring/mb_gpc.c
+@@ -222,8 +222,16 @@
+ 	}
+ 	num *= 2; /* need space for variable name and value */
+ 
+-	val_list = (char **)ecalloc(num, sizeof(char *));
+-	len_list = (size_t *)ecalloc(num, sizeof(size_t));
++	val_list = (char **)_safe_femalloc(num, sizeof(char *), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (!val_list) {
++		goto out;
++	}
++	memset(val_list, 0, num * sizeof(char *));
++	len_list = (size_t *)_safe_femalloc(num, sizeof(size_t), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (!len_list) {
++		goto out;
++	}
++	memset(len_list, 0, num * sizeof(size_t));
+ 
+ 	/* split and decode the query */
+ 	n = 0;
+@@ -337,6 +345,10 @@
+ 			mbfl_string_clear(&resvar);
+ 			mbfl_string_clear(&resval);
+ 		}
++		if (ZEND_HAS_OOM()) {
++			from_encoding = NULL;
++			goto out;
++		}
+ 	}
+ 
+ out:
+--- a/ext/mbstring/php_mbregex.c
++++ b/ext/mbstring/php_mbregex.c
+@@ -720,6 +720,9 @@
+ 	eos = replace + replace_len;
+ 
+ 	while (p < eos) {
++		if (ZEND_HAS_OOM()) {
++			return;
++		}
+ 		clen = (int) php_mb_mbchar_bytes_ex(p, enc);
+ 		if (clen != 1 || p == eos || p[0] != '\\') {
+ 			/* skip anything that's not an ascii backslash */
+@@ -1214,6 +1217,10 @@
+ 			}
+ 		}
+ 		onig_region_free(regs, 0);
++		if (ZEND_HAS_OOM()) {
++			err = -2;
++			break;
++		}
+ 	}
+ 
+ 	if (description) {
