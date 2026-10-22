@@ -4349,22 +4349,55 @@
  
  
  /* {{{ reference-handling for unserializer: var_* */
-@@ -244,9 +248,13 @@
+@@ -244,8 +248,12 @@
  static zend_string *unserialize_str(const unsigned char **p, size_t len, size_t maxlen)
  {
  	size_t i, j;
 -	zend_string *str = zend_string_safe_alloc(1, len, 0, 0);
 +	zend_string *str = zend_string_safe_falloc(1, len, 0, 0);
  	unsigned char *end = *(unsigned char **)p+maxlen;
- 
++
 +	if (UNEXPECTED(!str)) {
 +		return NULL;
 +	}
-+
+ 
  	if (end < *p) {
  		zend_string_efree(str);
- 		return NULL;
-@@ -301,6 +309,10 @@
+@@ -284,6 +292,33 @@
+ 	return str;
+ }
+ 
++static zend_class_entry *unserialize_lookup_class(zend_string *class_name)
++{
++    const char *name = ZSTR_VAL(class_name);
++    size_t len = ZSTR_LEN(class_name);
++    zend_string *lc_name;
++    zend_class_entry *ce;
++    zval key;
++
++    if (UNEXPECTED(ZEND_HAS_OOM())) {
++        return NULL;
++    }
++    if (len && name[0] == '\\') {
++        name++;
++        len--;
++    }
++    lc_name = zend_string_safe_falloc(1, len, 0, 0);
++    if (UNEXPECTED(!lc_name)) {
++        return NULL;
++    }
++    zend_str_tolower_copy(ZSTR_VAL(lc_name), name, len);
++    ZSTR_VAL(lc_name)[len] = '\0';
++    ZVAL_STR(&key, lc_name);
++    ce = zend_lookup_class_ex(class_name, &key, 1);
++    zend_string_release_ex(lc_name, 0);
++    return ce;
++}
++
+ static inline int unserialize_allowed_class(
+ 		zend_string *class_name, php_unserialize_data_t *var_hashx)
+ {
+@@ -301,6 +336,10 @@
  
  	ZSTR_ALLOCA_ALLOC(lcname, ZSTR_LEN(class_name), use_heap);
  	zend_str_tolower_copy(ZSTR_VAL(lcname), ZSTR_VAL(class_name), ZSTR_LEN(class_name));
@@ -4375,31 +4408,31 @@
  	res = zend_hash_exists(classes, lcname);
  	ZSTR_ALLOCA_FREE(lcname, use_heap);
  	return res;
-@@ -406,6 +418,13 @@
- 			return 0;
- 		}
+@@ -402,6 +441,13 @@
+ 		ZVAL_UNDEF(&key);
  
-+		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
-+				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
-+					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
 +			zval_ptr_dtor(&key);
 +			return 0;
 +		}
 +
- 		data = NULL;
- 		ZVAL_UNDEF(&d);
- 
-@@ -515,6 +534,9 @@
- 
- 		if (elements && *(*p-1) != ';' && *(*p-1) != '}') {
- 			(*p)--;
-+			return 0;
-+		}
-+		if (ZEND_HAS_OOM()) {
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
  			return 0;
  		}
+@@ -517,6 +563,9 @@
+ 			(*p)--;
+ 			return 0;
+ 		}
++		if (ZEND_HAS_OOM()) {
++			return 0;
++		}
  	}
-@@ -532,7 +554,7 @@
+ 
+ 	return 1;
+@@ -532,7 +581,7 @@
  	return 1;
  }
  
@@ -4408,7 +4441,7 @@
  {
  	zend_long datalen;
  
-@@ -552,13 +574,22 @@
+@@ -552,13 +601,22 @@
  		return 0;
  	}
  
@@ -4432,7 +4465,7 @@
  	(*p) += datalen + 1; /* +1 for '}' */
  	return 1;
  }
-@@ -609,6 +640,9 @@
+@@ -609,6 +667,9 @@
  	}
  
  	zend_hash_extend(ht, zend_hash_num_elements(ht) + elements, HT_FLAGS(ht) & HASH_FLAG_PACKED);
@@ -4442,7 +4475,7 @@
  	if (!process_nested_data(UNSERIALIZE_PASSTHRU, ht, elements, 1)) {
  		if (has_wakeup) {
  			ZVAL_DEREF(rval);
-@@ -663,6 +697,9 @@
+@@ -663,6 +724,9 @@
  	const unsigned char *cursor, *limit, *marker, *start;
  	zval *rval_ref;
  
@@ -4452,7 +4485,7 @@
  	limit = max;
  	cursor = *p;
  
-@@ -829,10 +866,20 @@
+@@ -829,10 +893,20 @@
  		ZVAL_EMPTY_STRING(rval);
  	} else if (len == 1) {
  		ZVAL_INTERNED_STR(rval, ZSTR_CHAR((zend_uchar)*str));
@@ -4476,7 +4509,7 @@
  	}
  	return 1;
  }
-@@ -883,9 +930,15 @@
+@@ -883,9 +957,15 @@
  
  	if (elements) {
  		array_init_size(rval, elements);
@@ -4492,7 +4525,7 @@
  	} else {
  		ZVAL_EMPTY_ARRAY(rval);
  		return finish_nested_data(UNSERIALIZE_PASSTHRU);
-@@ -961,14 +1014,31 @@
+@@ -961,27 +1041,47 @@
  		return 0;
  	}
  
@@ -4526,7 +4559,43 @@
  
  		/* Try to find class directly */
  		BG(serialize_lock)++;
-@@ -1043,7 +1113,7 @@
+-		ce = zend_lookup_class(class_name);
++		ce = unserialize_lookup_class(class_name);
++		BG(serialize_lock)--;
++		if (UNEXPECTED(ZEND_HAS_OOM())) {
++			zend_string_release_ex(class_name, 0);
++			return 0;
++		}
+ 		if (ce) {
+-			BG(serialize_lock)--;
+ 			if (EG(exception)) {
+ 				zend_string_release_ex(class_name, 0);
+ 				return 0;
+ 			}
+ 			break;
+ 		}
+-		BG(serialize_lock)--;
+ 
+ 		if (EG(exception)) {
+ 			zend_string_release_ex(class_name, 0);
+@@ -1026,7 +1126,15 @@
+ 
+ 		/* The callback function may have defined the class */
+ 		BG(serialize_lock)++;
+-		if ((ce = zend_lookup_class(class_name)) == NULL) {
++		ce = unserialize_lookup_class(class_name);
++		if (UNEXPECTED(ZEND_HAS_OOM())) {
++			BG(serialize_lock)--;
++			zend_string_release_ex(class_name, 0);
++			zval_ptr_dtor(&user_func);
++			zval_ptr_dtor(&args[0]);
++			return 0;
++		}
++		if (ce == NULL) {
+ 			php_error_docref(NULL, E_WARNING, "Function %s() hasn't defined the class it was called for", Z_STRVAL(user_func));
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1043,7 +1151,7 @@
  	if (custom_object) {
  		int ret;
  
@@ -4535,7 +4604,7 @@
  
  		if (ret && incomplete_class) {
  			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
-@@ -1059,6 +1129,10 @@
+@@ -1059,6 +1167,10 @@
  	   return 0;
  	}
  
@@ -4573,22 +4642,55 @@
  
  
  /* {{{ reference-handling for unserializer: var_* */
-@@ -245,9 +250,13 @@
+@@ -245,8 +250,12 @@
  static zend_string *unserialize_str(const unsigned char **p, size_t len, size_t maxlen)
  {
  	size_t i, j;
 -	zend_string *str = zend_string_safe_alloc(1, len, 0, 0);
 +	zend_string *str = zend_string_safe_falloc(1, len, 0, 0);
  	unsigned char *end = *(unsigned char **)p+maxlen;
- 
++
 +	if (UNEXPECTED(!str)) {
 +		return NULL;
 +	}
-+
+ 
  	if (end < *p) {
  		zend_string_efree(str);
- 		return NULL;
-@@ -302,6 +311,10 @@
+@@ -285,6 +294,33 @@
+ 	return str;
+ }
+ 
++static zend_class_entry *unserialize_lookup_class(zend_string *class_name)
++{
++    const char *name = ZSTR_VAL(class_name);
++    size_t len = ZSTR_LEN(class_name);
++    zend_string *lc_name;
++    zend_class_entry *ce;
++    zval key;
++
++    if (UNEXPECTED(ZEND_HAS_OOM())) {
++        return NULL;
++    }
++    if (len && name[0] == '\\') {
++        name++;
++        len--;
++    }
++    lc_name = zend_string_safe_falloc(1, len, 0, 0);
++    if (UNEXPECTED(!lc_name)) {
++        return NULL;
++    }
++    zend_str_tolower_copy(ZSTR_VAL(lc_name), name, len);
++    ZSTR_VAL(lc_name)[len] = '\0';
++    ZVAL_STR(&key, lc_name);
++    ce = zend_lookup_class_ex(class_name, &key, 1);
++    zend_string_release_ex(lc_name, 0);
++    return ce;
++}
++
+ static inline int unserialize_allowed_class(
+ 		zend_string *class_name, php_unserialize_data_t *var_hashx)
+ {
+@@ -302,6 +338,10 @@
  
  	ZSTR_ALLOCA_ALLOC(lcname, ZSTR_LEN(class_name), use_heap);
  	zend_str_tolower_copy(ZSTR_VAL(lcname), ZSTR_VAL(class_name), ZSTR_LEN(class_name));
@@ -4599,7 +4701,7 @@
  	res = zend_hash_exists(classes, lcname);
  	ZSTR_ALLOCA_FREE(lcname, use_heap);
  	return res;
-@@ -314,6 +327,7 @@
+@@ -314,6 +354,7 @@
  #define YYMARKER marker
  
  
@@ -4607,21 +4709,21 @@
  
  
  
-@@ -400,6 +414,13 @@
- 			return 0;
- 		}
+@@ -396,6 +437,13 @@
+ 		ZVAL_UNDEF(&key);
  
-+		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
-+				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
-+					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 		if (!php_var_unserialize_internal(&key, p, max, NULL, 1)) {
 +			zval_ptr_dtor(&key);
 +			return 0;
 +		}
 +
- 		data = NULL;
- 		ZVAL_UNDEF(&d);
- 
-@@ -511,6 +532,9 @@
++		if (objprops && (*var_hash)->incomplete_classes_only && Z_TYPE(key) == IS_STRING
++				&& (zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER)
++					|| zend_string_equals_literal(Z_STR(key), MAGIC_MEMBER_SERIALIZED))) {
+ 			zval_ptr_dtor(&key);
+ 			return 0;
+ 		}
+@@ -511,6 +559,9 @@
  			(*p)--;
  			return 0;
  		}
@@ -4631,7 +4733,7 @@
  	}
  
  	return 1;
-@@ -526,7 +550,7 @@
+@@ -526,7 +577,7 @@
  	return 1;
  }
  
@@ -4640,7 +4742,7 @@
  {
  	zend_long datalen;
  
-@@ -546,13 +570,22 @@
+@@ -546,13 +597,22 @@
  		return 0;
  	}
  
@@ -4664,7 +4766,7 @@
  	(*p) += datalen + 1; /* +1 for '}' */
  	return 1;
  }
-@@ -603,6 +636,9 @@
+@@ -603,6 +663,9 @@
  	}
  
  	zend_hash_extend(ht, zend_hash_num_elements(ht) + elements, HT_FLAGS(ht) & HASH_FLAG_PACKED);
@@ -4674,7 +4776,7 @@
  	if (!process_nested_data(UNSERIALIZE_PASSTHRU, ht, elements, 1)) {
  		if (has_wakeup) {
  			ZVAL_DEREF(rval);
-@@ -657,6 +693,9 @@
+@@ -657,6 +720,9 @@
  	const unsigned char *cursor, *limit, *marker, *start;
  	zval *rval_ref;
  
@@ -4684,7 +4786,7 @@
  	limit = max;
  	cursor = *p;
  
-@@ -671,6 +710,7 @@
+@@ -671,6 +737,7 @@
  	start = cursor;
  
  
@@ -4692,7 +4794,7 @@
  {
  	YYCTYPE yych;
  	static const unsigned char yybm[] = {
-@@ -728,7 +768,9 @@
+@@ -728,7 +795,9 @@
  yy2:
  	++YYCURSOR;
  yy3:
@@ -4702,7 +4804,7 @@
  yy4:
  	yych = *(YYMARKER = ++YYCURSOR);
  	if (yych == ':') goto yy17;
-@@ -775,11 +817,13 @@
+@@ -775,11 +844,13 @@
  	goto yy3;
  yy15:
  	++YYCURSOR;
@@ -4716,7 +4818,7 @@
  yy17:
  	yych = *++YYCURSOR;
  	if (yybm[0+yych] & 128) {
-@@ -790,11 +834,13 @@
+@@ -790,11 +861,13 @@
  	goto yy3;
  yy19:
  	++YYCURSOR;
@@ -4730,7 +4832,7 @@
  yy21:
  	yych = *++YYCURSOR;
  	if (yych <= '/') goto yy18;
-@@ -998,6 +1044,7 @@
+@@ -998,6 +1071,7 @@
  	goto yy18;
  yy57:
  	++YYCURSOR;
@@ -4738,7 +4840,7 @@
  	{
  	zend_long id;
  
-@@ -1022,6 +1069,7 @@
+@@ -1022,6 +1096,7 @@
  
  	return 1;
  }
@@ -4746,7 +4848,7 @@
  yy59:
  	yych = *++YYCURSOR;
  	if (yych == '"') goto yy80;
-@@ -1032,18 +1080,22 @@
+@@ -1032,18 +1107,22 @@
  	goto yy18;
  yy61:
  	++YYCURSOR;
@@ -4769,7 +4871,7 @@
  yy65:
  	++YYCURSOR;
  	if ((YYLIMIT - YYCURSOR) < 3) YYFILL(3);
-@@ -1063,6 +1115,7 @@
+@@ -1063,6 +1142,7 @@
  	}
  yy67:
  	++YYCURSOR;
@@ -4777,7 +4879,7 @@
  	{
  #if SIZEOF_ZEND_LONG == 4
  use_double:
-@@ -1071,6 +1124,7 @@
+@@ -1071,6 +1151,7 @@
  	ZVAL_DOUBLE(rval, zend_strtod((const char *)start + 2, NULL));
  	return 1;
  }
@@ -4785,7 +4887,7 @@
  yy69:
  	yych = *++YYCURSOR;
  	if (yych <= ',') {
-@@ -1092,6 +1146,7 @@
+@@ -1092,6 +1173,7 @@
  	goto yy18;
  yy72:
  	++YYCURSOR;
@@ -4793,7 +4895,7 @@
  	{
  #if SIZEOF_ZEND_LONG == 4
  	int digits = YYCURSOR - start - 3;
-@@ -1117,12 +1172,14 @@
+@@ -1117,12 +1199,14 @@
  	ZVAL_LONG(rval, parse_iv(start + 2));
  	return 1;
  }
@@ -4808,7 +4910,7 @@
  	{
  	zend_long id;
  
-@@ -1147,12 +1204,14 @@
+@@ -1147,12 +1231,14 @@
  
  	return 1;
  }
@@ -4823,7 +4925,7 @@
  	{
  	size_t len, len2, len3, maxlen;
  	zend_long elements;
-@@ -1199,14 +1258,31 @@
+@@ -1199,27 +1285,47 @@
  		return 0;
  	}
  
@@ -4857,7 +4959,43 @@
  
  		/* Try to find class directly */
  		BG(serialize_lock)++;
-@@ -1281,7 +1357,7 @@
+-		ce = zend_lookup_class(class_name);
++		ce = unserialize_lookup_class(class_name);
++		BG(serialize_lock)--;
++		if (UNEXPECTED(ZEND_HAS_OOM())) {
++			zend_string_release_ex(class_name, 0);
++			return 0;
++		}
+ 		if (ce) {
+-			BG(serialize_lock)--;
+ 			if (EG(exception)) {
+ 				zend_string_release_ex(class_name, 0);
+ 				return 0;
+ 			}
+ 			break;
+ 		}
+-		BG(serialize_lock)--;
+ 
+ 		if (EG(exception)) {
+ 			zend_string_release_ex(class_name, 0);
+@@ -1264,7 +1370,15 @@
+ 
+ 		/* The callback function may have defined the class */
+ 		BG(serialize_lock)++;
+-		if ((ce = zend_lookup_class(class_name)) == NULL) {
++		ce = unserialize_lookup_class(class_name);
++		if (UNEXPECTED(ZEND_HAS_OOM())) {
++			BG(serialize_lock)--;
++			zend_string_release_ex(class_name, 0);
++			zval_ptr_dtor(&user_func);
++			zval_ptr_dtor(&args[0]);
++			return 0;
++		}
++		if (ce == NULL) {
+ 			php_error_docref(NULL, E_WARNING, "Function %s() hasn't defined the class it was called for", Z_STRVAL(user_func));
+ 			incomplete_class = 1;
+ 			ce = PHP_IC_ENTRY;
+@@ -1281,7 +1395,7 @@
  	if (custom_object) {
  		int ret;
  
@@ -4866,7 +5004,7 @@
  
  		if (ret && incomplete_class) {
  			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
-@@ -1297,6 +1373,10 @@
+@@ -1297,6 +1411,10 @@
  	   return 0;
  	}
  
@@ -4877,7 +5015,7 @@
  	if (incomplete_class) {
  		php_store_class_name(rval, ZSTR_VAL(class_name), len2);
  	}
-@@ -1304,8 +1384,10 @@
+@@ -1304,8 +1422,10 @@
  
  	return object_common2(UNSERIALIZE_PASSTHRU, elements);
  }
@@ -4888,7 +5026,7 @@
  	{
  	size_t len, maxlen;
  	zend_string *str;
-@@ -1339,8 +1421,10 @@
+@@ -1339,8 +1459,10 @@
  	ZVAL_STR(rval, str);
  	return 1;
  }
@@ -4899,7 +5037,7 @@
  	{
  	zend_long elements = parse_iv(start + 2);
  	/* use iv() not uiv() in order to check data range */
-@@ -1353,9 +1437,15 @@
+@@ -1353,9 +1475,15 @@
  
  	if (elements) {
  		array_init_size(rval, elements);
@@ -4915,7 +5053,7 @@
  	} else {
  		ZVAL_EMPTY_ARRAY(rval);
  		return finish_nested_data(UNSERIALIZE_PASSTHRU);
-@@ -1373,6 +1463,7 @@
+@@ -1373,6 +1501,7 @@
  
  	return finish_nested_data(UNSERIALIZE_PASSTHRU);
  }
@@ -4923,7 +5061,7 @@
  yy84:
  	yych = *++YYCURSOR;
  	if (yych <= '/') goto yy18;
-@@ -1391,6 +1482,7 @@
+@@ -1391,6 +1520,7 @@
  	goto yy18;
  yy88:
  	++YYCURSOR;
@@ -4931,7 +5069,7 @@
  	{
  	zend_long elements;
      if (!var_hash) return 0;
-@@ -1401,8 +1493,10 @@
+@@ -1401,8 +1531,10 @@
  	}
  	return object_common2(UNSERIALIZE_PASSTHRU, elements);
  }
@@ -4942,7 +5080,7 @@
  	{
  	size_t len, maxlen;
  	char *str;
-@@ -1435,15 +1529,27 @@
+@@ -1435,15 +1567,27 @@
  		ZVAL_EMPTY_STRING(rval);
  	} else if (len == 1) {
  		ZVAL_INTERNED_STR(rval, ZSTR_CHAR((zend_uchar)*str));
@@ -4973,12 +5111,13 @@
  	{
  	*p = YYCURSOR;
  
-@@ -1459,7 +1565,9 @@
+@@ -1459,7 +1603,9 @@
  
  	return 1;
  }
+-}
 +#line 1539 "ext/standard/var_unserializer.c"
- }
++}
 +#line 1122 "ext/standard/var_unserializer.re"
  
  
