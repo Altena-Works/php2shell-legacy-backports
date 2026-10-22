@@ -23,12 +23,12 @@
 
 ## 7.3.33 の未変更・未判定ファイル
 
-公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが7件ある。当初の21件から `tokenizer.c`、`fileinfo/libmagic/cdf.c`、`exif/exif.c`、SOAPの3ファイル、`mb_gpc.c`、`php_mbregex.c`、`mbfl_memory_device.c`、`mbstring.c`、`gd/libgd/wbmp.c` を候補へ追加した。これは機械的な調査リストであり、7件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
+公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが5件ある。当初の21件から `tokenizer.c`、`fileinfo/libmagic/cdf.c`、`exif/exif.c`、SOAPの3ファイル、`mb_gpc.c`、`php_mbregex.c`、`mbfl_memory_device.c`、`mbstring.c`、`gd/libgd/wbmp.c` を候補へ追加した。これは機械的な調査リストであり、5件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
 
 - Zend: `zend_compile.c`、`zend_operators.c`、`zend_string.c`。復号側の代替実装を含め、同等性を判定する。
-- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`opcache/ZendAccelerator.c`。`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`gd/libgd/wbmp.c`、`fileinfo/libmagic/cdf.c`、`tokenizer/tokenizer.c`、`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c`、`xml/xml.c`、`json/json_scanner.c`、SOAPの3ファイル、`mb_gpc.c`、`php_mbregex.c`、`mbfl_memory_device.c`、`mbstring.c` は変更済みだが個々の失敗地点は未判定。
+- 拡張: `mbstring/libmbfl/mbfl/mbfl_encoding.h`、`opcache/ZendAccelerator.c`。`bz2/bz2.c`、`bz2/bz2_filter.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`gd/libgd/wbmp.c`、`fileinfo/libmagic/cdf.c`、`tokenizer/tokenizer.c`、`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c`、`xml/xml.c`、`json/json_scanner.c`、SOAPの3ファイル、`mb_gpc.c`、`php_mbregex.c`、`mbfl_memory_device.c`、`mbstring.c` は変更済みだが個々の失敗地点は未判定。
 
-現行候補に変更がない7ファイルはすべて7.3.33にも存在する。公式差分の入口ごとの判定は未完了だが、次の移植順は以下とする。
+現行候補に変更がない5ファイルはすべて7.3.33にも存在する。公式差分の入口ごとの判定は未完了だが、次の移植順は以下とする。
 
 | 対象 | 公式差分の主な内容 | 次の確認 |
 | --- | --- | --- |
@@ -43,8 +43,8 @@ EXIFのファイル節再確保に加え、公式差分の複数値・サムネ�
 
 SOAPの多次元配列復号、HTTP応答バッファ、引数復号とOOM中の例外処理を7.3のAPIへ移した。現候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は固定元ソースへfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルド、版別正常系と通常SOAP往復を通過した。大きな正常SOAP応答を8 MiB制限で受けた場合にOOMが報告され、同一Apacheワーカーの次要求処理を確認した。SOAPの他の割当地点、chunked応答、引数・多次元復号時の個別OOMは未実測。
 
-mbstring候補は `mb_gpc.c` と `php_mbregex.c` に加え、7.3固有のlibmbfl割当器・メモリ装置・filter/flush・PHP呼び出し元を修正した。前候補 `044fe9c50437c0070fbbbaca59bfd5c1ec9c098c62526600308e93bacd7fa232` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。前候補では文字幅計算のfilter失敗伝播も追加。固定ソースへの厳密適用、追加差分の増分ビルドと通常の `mb_strwidth`・`mb_strimwidth` 検査を通過。現候補のintl有効クリーンビルドと版別検査は通過。許可クラス名・キーの各割当失敗地点、キー重複排除の性能影響、GET/Cookie/POST直接入口、regex callback・旧 `e` モード、libmbfl各失敗地点は未検証。`mbfl_strcut` などfilter戻り値を無視する経路は継続監査する。
+mbstring候補は `mb_gpc.c` と `php_mbregex.c` に加え、7.3固有のlibmbfl割当器・メモリ装置・filter/flush・PHP呼び出し元を修正した。前候補 `044fe9c50437c0070fbbbaca59bfd5c1ec9c098c62526600308e93bacd7fa232` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。前候補では文字幅計算のfilter失敗伝播も追加。固定ソースへの厳密適用、追加差分の増分ビルドと通常の `mb_strwidth`・`mb_strimwidth` 検査を通過。bzip2追加前候補のintl有効クリーンビルドと版別検査は通過。許可クラス名・キーの各割当失敗地点、キー重複排除の性能影響、GET/Cookie/POST直接入口、regex callback・旧 `e` モード、libmbfl各失敗地点は未検証。`mbfl_strcut` などfilter戻り値を無視する経路は継続監査する。
 
-`ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2は公式差分に圧縮・展開時の失敗可能割当とフィルター中断があるが、既存の隔離ビルダーに `bzlib.h` とリンク用 `libbz2.so` がなく、実機相当の検証は未実施。実装済みとは扱わない。
+`ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2の圧縮・展開時の失敗可能割当とフィルター中断を候補へ追加し、固定元ソースへのfuzzなし適用を確認。既存の隔離ビルダーに `bzlib.h` とリンク用 `libbz2.so` がなく、既存ビルドヘッダとローカルSDKの `bzlib.h` によるLinux/amd64構文・型検査は通過。bzip2有効のリンク・Apache実動作は未検証。
 
 候補パッチに含まれるファイルも行単位の等価性は未証明。特にセッションの異常終了境界、JSON/PCRE内部割当、SPLの複製・復元、cURLの他モード、zlibの各割当地点を別に扱う。

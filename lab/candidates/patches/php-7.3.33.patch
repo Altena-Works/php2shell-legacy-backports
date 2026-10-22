@@ -8121,3 +8121,99 @@
  		uret_len = size_needed;
  
  		status = U_ZERO_ERROR;
+--- a/ext/bz2/bz2.c
++++ b/ext/bz2/bz2.c
+@@ -529,7 +529,10 @@
+ 	dest_len = (unsigned int) (source_len + (0.01 * source_len) + 600);
+ 
+ 	/* Allocate the destination buffer */
+-	dest = zend_string_alloc(dest_len, 0);
++	dest = zend_string_safe_falloc(1, dest_len, 0, 0);
++	if (!dest) {
++		RETURN_OOM();
++	}
+ 
+ 	/* Handle the optional arguments */
+ 	if (argc > 1) {
+@@ -559,7 +562,7 @@
+ static PHP_FUNCTION(bzdecompress)
+ {
+ 	char *source;
+-	zend_string *dest;
++	zend_string *dest = NULL, *tmp;
+ 	size_t source_len;
+ 	int error;
+ 	zend_long small = 0;
+@@ -585,7 +588,10 @@
+ 	bzs.avail_in = source_len;
+ 
+ 	/* in most cases bz2 offers at least 2:1 compression, so we use that as our base */
+-	dest = zend_string_safe_alloc(source_len, 2, 1, 0);
++	dest = zend_string_safe_falloc(source_len, 2, 1, 0);
++	if (!dest) {
++		goto failure;
++	}
+ 	bzs.avail_out = source_len * 2;
+ 	bzs.next_out = ZSTR_VAL(dest);
+ 
+@@ -599,7 +605,11 @@
+ 			break;
+ 		}
+ #endif
+-		dest = zend_string_safe_realloc(dest, 1, bzs.avail_out+1, (size_t) size, 0);
++		tmp = zend_string_safe_frealloc(dest, 1, bzs.avail_out+1, (size_t) size, 0);
++		if (!tmp) {
++			goto failure;
++		}
++		dest = tmp;
+ 		bzs.next_out = ZSTR_VAL(dest) + size;
+ 	}
+ 
+@@ -613,7 +623,11 @@
+ 		} else
+ #endif
+ 		{
+-			dest = zend_string_safe_realloc(dest, 1, (size_t)size, 1, 0);
++			tmp = zend_string_safe_frealloc(dest, 1, (size_t)size, 1, 0);
++			if (!tmp) {
++				goto failure;
++			}
++			dest = tmp;
+ 			ZSTR_LEN(dest) = (size_t)size;
+ 			ZSTR_VAL(dest)[(size_t)size] = '\0';
+ 			RETVAL_STR(dest);
+@@ -624,6 +638,13 @@
+ 	}
+ 
+ 	BZ2_bzDecompressEnd(&bzs);
++	return;
++
++failure:
++	if (dest) {
++		zend_string_efree(dest);
++	}
++	BZ2_bzDecompressEnd(&bzs);
+ }
+ /* }}} */
+ 
+--- a/ext/bz2/bz2_filter.c
++++ b/ext/bz2/bz2_filter.c
+@@ -91,6 +91,9 @@
+ 
+ 		bucket = php_stream_bucket_make_writeable(buckets_in->head);
+ 		while (bin < bucket->buflen) {
++			if (ZEND_HAS_OOM()) {
++				break;
++			}
+ 			if (data->status == PHP_BZ2_UNITIALIZED) {
+ 				status = BZ2_bzDecompressInit(streamp, 0, data->small_footprint);
+ 
+@@ -155,7 +158,7 @@
+ 	if ((data->status == PHP_BZ2_RUNNING) && (flags & PSFS_FLAG_FLUSH_CLOSE)) {
+ 		/* Spit it out! */
+ 		status = BZ_OK;
+-		while (status == BZ_OK) {
++		while (status == BZ_OK && !ZEND_HAS_OOM()) {
+ 			status = BZ2_bzDecompress(&(data->strm));
+ 			if (data->strm.avail_out < data->outbuf_len) {
+ 				size_t bucketlen = data->outbuf_len - data->strm.avail_out;

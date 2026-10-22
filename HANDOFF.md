@@ -8,19 +8,19 @@
 
 追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。[PHP公式の検証済み Issue #24488](https://github.com/php/php-src/issues/24488)のSimpleXML/GC二重解放は8.4.27/8.5.12の別件回帰で、[公式修正コミット](https://github.com/php/php-src/commit/f963484)によりIssueは閉じられた。固定したPHP 5〜7最終版の元アーカイブ12件には原因となるGH-24050のGC追加処理がなく、[版別判定](notes/double-free-24488-triage.md)では直接該当しない。[SNS画像の元投稿](https://fedi.katze.sh/@elise/117479383739450605)には「今回修正された脆弱性とは別」という追記があると複数の引用で確認したが、Issue #24488との同一性や旧版固有の別経路は未判定。記事内のZIP・PoCは取得も実行もしていない。
 
-公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDF、EXIF、SOAP、mbstringの入力変換・正規表現・libmbfl出力、GD/WBMPなどを候補へ移植し限定検証した。機械的な未変更・未判定リストは7件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDF、EXIF、SOAP、mbstringの入力変換・正規表現・libmbfl出力、GD/WBMPなどを候補へ移植し限定検証した。機械的な未変更・未判定リストは5件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。intlを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過。intlの通常機能と良性OOM後の同一ワーカー継続を確認 | IMAP・GD有効構成、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。bzip2追加前候補はintlを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過。intlの通常機能と良性OOM後の同一ワーカー継続を確認 | IMAP・GD有効構成、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `9483d9981e0fdee977d06c0633ce82eb149f36b1a63c8e32a74ae0bd2419b6bd`。固定元ソースへのfuzzなし適用、intl有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別検査 `pass`（`/private/tmp/php-backport-73-intl-clean/patch/7.3.33/`）。生成モジュール SHA-256 は `060af62bc486930ef87c450b741ea2342a0357d7f83081e518ea86bd88632435`。intlのUConverterとNormalizerの通常動作を確認し、8 MiB制限で良性OOMが報告された後も同一Apacheワーカーが次要求を処理した。OOMの内部割当地点は特定していない。IMAPは開発ヘッダ不足でビルド・実測なし。GD/WBMPは個別の構文・型検査のみ通過。全経路遮断の確認には達していない。
+7.3.33 の現候補 SHA-256 は `cd7020485baaa92fdd99c42327473f546f7b1fd874066e04c94257a6c76bfaa8`。現候補の固定元ソースへのfuzzなし適用、bzip2追加前候補のintl有効Linux/amd64・Apache/mod_phpクリーンビルドと版別検査 `pass`（`/private/tmp/php-backport-73-intl-clean/patch/7.3.33/`）。生成モジュール SHA-256 は `060af62bc486930ef87c450b741ea2342a0357d7f83081e518ea86bd88632435`。intlのUConverterとNormalizerの通常動作を確認し、8 MiB制限で良性OOMが報告された後も同一Apacheワーカーが次要求を処理した。OOMの内部割当地点は特定していない。IMAPは開発ヘッダ不足でビルド・実測なし。GD/WBMPは個別の構文・型検査のみ通過。bzip2の圧縮・展開・フィルター修正は候補に追加し、固定元ソースへのfuzzなし適用を確認した。bzip2候補2ファイルは既存ビルドのヘッダとローカルSDKの `bzlib.h` を使いLinux/amd64で構文・型検査を通過。bzip2有効のリンク・Apache実動作は未検証。全経路遮断の確認には達していない。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -34,7 +34,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 ## 次の作業
 
-1. 7.3.33 の残る7ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。GD/WBMPも拡張を組み込んだ実測が残る。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の残る5ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2は候補へ移したが、既存ビルダーに開発ヘッダとリンク用ライブラリがなく、リンク・Apache実動作は未検証。GD/WBMPも拡張を組み込んだ実測が残る。検証可能な構成を用意してから移植・実測する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
