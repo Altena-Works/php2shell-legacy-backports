@@ -13,14 +13,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、libxml/Expat両構成のLinux/amd64クリーンビルドとApache/mod_php版別正常系・良性OOM検査を通過。XML SAX・zlib・SimpleXML・iconv・XMLWriterの指定経路で良性OOM後の同一worker継続、3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64クリーンビルドとApache/mod_php版別正常系・良性OOM検査を通過。XML SAX・JSON文字列復号・zlib・SimpleXML・iconv・XMLWriterの指定経路で良性OOM後の同一worker継続、3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認。XMLは前候補でlibxml/Expat両構成を検証 | 他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `741f9c25365abe8d223c479f4f0e5825d4ccb23e38fc58372191ef03874fb2f0`。`/private/tmp/php-backport-73-expat-clean/patch/7.3.33/` と `/private/tmp/php-backport-73-expat-libxml-clean/patch/7.3.33/` で、同じ候補を固定ソースへfuzzなし適用した。Expat/libxml両構成のLinux/amd64クリーンビルド、Apache/mod_php版別チェックは `pass`。Expat構成では `XML_SAX_IMPL=expat` を確認し、両構成で通常XML解析と指定した良性OOM後の同一ワーカー再利用を確認した。3保存形式の通常multipartと指定したセッション復号OOM後の保存ファイル不変性も版別チェックを通過。結果は各ディレクトリの `defense-check.log`。これは指定した入力と失敗地点に限る。
+7.3.33 の現候補 SHA-256 は `96788089942611ce9840692246fcd0399bb60d027bed19f8dfe6f092d18206a4`。`/private/tmp/php-backport-73-json-scanner-clean/patch/7.3.33/` で固定ソースへfuzzなし適用し、Linux/amd64クリーンビルドとApache/mod_php版別チェックが `pass`。通常JSON復号、良性の長いJSON文字列でのOOM後の同一ワーカー再利用を確認した。前候補のExpat/libxml両構成の結果は `/private/tmp/php-backport-73-expat-clean/patch/7.3.33/` と `/private/tmp/php-backport-73-expat-libxml-clean/patch/7.3.33/` にあり、同じXML修正を含むが現候補ハッシュとは異なる。いずれも指定した入力と失敗地点に限る。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
@@ -30,7 +30,7 @@
 
 ## 次の作業
 
-1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。XML SAX候補はlibxml/Expat両構成の指定経路で検証済み。upload progress中の他の復号OOM地点と要求間状態を判定し、公式修正に対応する未判定ファイルを閉じる。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。bzip2には公式の圧縮・展開・フィルター修正が未移植で、既存ビルダーには開発ヘッダとリンク用ライブラリがない。検証可能な構成を用意してから移植・実測する。upload progress中の他の復号OOM地点と要求間状態を判定し、公式修正に対応する未判定ファイルを閉じる。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。

@@ -39,7 +39,7 @@ normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-json-limit.php)
 [[ $normal == JSON_OK ]] || { printf 'normal JSON failed: %s\n' "$normal" >&2; exit 1; }
 
-for mode in limit escape decode; do
+for mode in limit escape decode string_decode; do
     podman exec "$container_id" curl -sS --max-time 20 \
         -o /tmp/json-limit.out "http://127.0.0.1/normal-json-limit.php?$mode=1" >/dev/null
     limited=$(podman exec "$container_id" tail -c 500 /tmp/json-limit.out)
@@ -48,6 +48,10 @@ for mode in limit escape decode; do
     [[ $limited == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
         printf 'expected %s soft OOM missing: %s\n' "$mode" "$limited" >&2; exit 1;
     }
+    if [[ $mode == string_decode && ( $limited != *READY* || $limited == *RETURNED* ) ]]; then
+        printf 'JSON string decode did not stop at OOM: %s\n' "$limited" >&2
+        exit 1
+    fi
     [[ ${pre%%$'\n'*} == ${post%%$'\n'*} ]] || {
         printf 'Apache worker changed after %s soft OOM\n' "$mode" >&2; exit 1;
     }

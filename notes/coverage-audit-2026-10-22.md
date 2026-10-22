@@ -36,6 +36,8 @@
 
 `ext/xml/xml.c` には、旧版で必要な `ltags` のゼロ初期化と部分解放、SAXコールバック中の保留OOM中断を一組で追加した。固定ソースへfuzzなし適用し、libxml構成で通常のSAX・構造化解析と良性OOM後の同一ワーカー再利用を確認した。さらに、上流の[Expat構成の非失敗可能割当報告](https://github.com/php/php-src/issues/24492)に対応し、Expat用のmalloc/realloc wrapperを失敗可能な割当へ変更し、パーサ生成失敗と解析後の保留OOMを安全な地点で処理する。Expat構成でも固定ソースからのクリーンビルド、実装識別、通常XMLと指定した良性OOM後の同一Apacheワーカー再利用を確認した。両構成の全割当失敗地点を検証した意味ではない。
 
+`ext/json/json_scanner.re` と生成済み `json_scanner.c` では、公式8.2.35がJSON文字列用確保を失敗可能にした一箇所を7.3.33の `zend_string_safe_falloc()` へ移した。固定ソースへのfuzzなし適用、Linux/amd64・Apache/mod_phpクリーンビルド、通常JSON復号、良性の長いJSON文字列で8MiB制限に達した後の同一ワーカー再利用を確認した。`bz2.c` と `bz2_filter.c` の公式差分は移植対象だが、既存の隔離ビルダーにbzip2開発ファイルがなく、実行検証可能な候補にはまだ組み込んでいない。
+
 追加候補では `zlib_filter.c` の2か所の保留OOM中断と、`main/streams/streams.c` のフィルター入力・読取バッファ・結果文字列の失敗可能な確保を移した。最初の候補は `stream_get_contents()` による良性の大容量展開で Apache worker が hard OOM により終了した。読取バッファと結果文字列の再確保を変更後、指定経路で soft OOM と同一 worker 継続を確認した。さらにフィルター入力バッファと区切り文字付き読取の返却文字列を公式差分に合わせ、後述のセッション復号修正も含めて固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、版別チェックを通過した。同じバイナリで通常フィルター動作と良性OOM後の同一 worker 継続を確認。個別の割当失敗地点と zlib 圧縮中のOOMは未判定。
 
 ### 8.5.12 の二重解放報告
