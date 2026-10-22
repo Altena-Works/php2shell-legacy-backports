@@ -43,7 +43,7 @@ EXIFのファイル節再確保に加え、公式差分の複数値・サムネ�
 
 SOAPの多次元配列復号、HTTP応答バッファ、引数復号とOOM中の例外処理を7.3のAPIへ移した。現候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は固定元ソースへfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルド、版別正常系と通常SOAP往復を通過した。大きな正常SOAP応答を8 MiB制限で受けた場合にOOMが報告され、同一Apacheワーカーの次要求処理を確認した。SOAPの他の割当地点、chunked応答、引数・多次元復号時の個別OOMは未実測。
 
-mbstring候補は `mb_gpc.c` と `php_mbregex.c` に加え、7.3固有のlibmbfl割当器・メモリ装置・filter/flush・PHP呼び出し元を修正した。前候補 `99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補 `4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64` は、許可クラス名の復号時割当も失敗可能にした。固定ソースへの厳密適用、追加差分の増分ビルド、許可クラスを含む通常復号と通常配列OOM後の同一ワーカー継続は通過。現候補の全体クリーンビルド、許可クラス名割当そのもののOOM、GET/Cookie/POST直接入口、regex callback・旧 `e` モード、libmbfl各失敗地点は未検証。`mbfl_strcut` などfilter戻り値を無視する経路は継続監査する。
+mbstring候補は `mb_gpc.c` と `php_mbregex.c` に加え、7.3固有のlibmbfl割当器・メモリ装置・filter/flush・PHP呼び出し元を修正した。前候補 `4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補 `044fe9c50437c0070fbbbaca59bfd5c1ec9c098c62526600308e93bacd7fa232` は、復号キーのrequest interned tableへの新規登録を避けた。固定ソースへの厳密適用、追加差分の増分ビルド、長いキー・許可クラスを含む通常復号と通常配列OOM後の同一ワーカー継続は通過。現候補の全体クリーンビルド、許可クラス名・キーの各割当失敗地点、キー重複排除の性能影響、GET/Cookie/POST直接入口、regex callback・旧 `e` モード、libmbfl各失敗地点は未検証。`mbfl_strcut` などfilter戻り値を無視する経路は継続監査する。
 
 `ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2は公式差分に圧縮・展開時の失敗可能割当とフィルター中断があるが、既存の隔離ビルダーに `bzlib.h` とリンク用 `libbz2.so` がなく、実機相当の検証は未実施。実装済みとは扱わない。
 

@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64`。libmbflの失敗処理に加え、許可クラス名の復号時小文字化に失敗可能な割当を使う。固定元ソースへのfuzzなし適用を確認した。前候補 `99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補の追加差分は増分コンパイル・リンク、3保存形式と許可クラスを含む通常復号、通常配列の良性OOM後の同一ワーカー継続を通過した。増分生成モジュール SHA-256 は `73a7a98afc81c7ed877adf1a2f7dbc7f384514fdf1f85b26d8df6cdcc48775c8`。現候補の全体クリーンビルドと、許可クラス名割当そのもののOOMは未実測。全経路遮断の確認には達していない。
+7.3.33 の現候補 SHA-256 は `044fe9c50437c0070fbbbaca59bfd5c1ec9c098c62526600308e93bacd7fa232`。許可クラス名の復号時小文字化を失敗可能な割当にし、復号キーは既存のpermanent interned stringだけを再利用してrequest interned tableへの新規登録を避ける。固定元ソースへのfuzzなし適用を確認。前候補 `4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補の追加差分は増分コンパイル・リンク、長い通常キー・許可クラス・3保存形式、通常配列の良性OOM後の同一ワーカー継続を通過した。増分生成モジュール SHA-256 は `63c0eaac335888d193810d52a36e1fd9957fd0f14271103a99a2df4713ca7511`。現候補の全体クリーンビルド、許可クラス名とキーの各割当失敗地点は未実測。要求中のキー重複排除を使わないことによる性能影響も未測定。全経路遮断の確認には達していない。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -41,7 +41,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
-ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で7.3.33の増分ビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
+ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で7.3.33前候補のクリーンビルドと現候補追加差分の増分ビルド・検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
 ユーザーがGitHub証明書について通常のpushを許可したため、TLS検証を無効化せず作業ブランチへ送信できた。main/masterへのpushは行わない。
 

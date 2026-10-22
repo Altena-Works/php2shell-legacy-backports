@@ -4603,7 +4603,7 @@
  	limit = max;
  	cursor = *p;
  
-@@ -829,10 +892,20 @@
+@@ -829,10 +892,21 @@
  		ZVAL_EMPTY_STRING(rval);
  	} else if (len == 1) {
  		ZVAL_INTERNED_STR(rval, ZSTR_CHAR((zend_uchar)*str));
@@ -4618,16 +4618,17 @@
 +		memcpy(ZSTR_VAL(zstr), str, len);
 +		ZSTR_VAL(zstr)[len] = '\0';
 +		if (as_key) {
-+			zstr = zend_new_interned_string(zstr);
-+			if (ZEND_HAS_OOM()) {
-+				return 0;
++			zend_string *known = zend_interned_string_find_permanent(zstr);
++			if (known) {
++				zend_string_release_ex(zstr, 0);
++				zstr = known;
 +			}
 +		}
 +		ZVAL_STR(rval, zstr);
  	}
  	return 1;
  }
-@@ -883,9 +956,15 @@
+@@ -883,9 +957,15 @@
  
  	if (elements) {
  		array_init_size(rval, elements);
@@ -4643,7 +4644,7 @@
  	} else {
  		ZVAL_EMPTY_ARRAY(rval);
  		return finish_nested_data(UNSERIALIZE_PASSTHRU);
-@@ -961,27 +1040,47 @@
+@@ -961,27 +1041,47 @@
  		return 0;
  	}
  
@@ -4696,7 +4697,7 @@
  
  		if (EG(exception)) {
  			zend_string_release_ex(class_name, 0);
-@@ -1026,7 +1125,15 @@
+@@ -1026,7 +1126,15 @@
  
  		/* The callback function may have defined the class */
  		BG(serialize_lock)++;
@@ -4713,7 +4714,7 @@
  			php_error_docref(NULL, E_WARNING, "Function %s() hasn't defined the class it was called for", Z_STRVAL(user_func));
  			incomplete_class = 1;
  			ce = PHP_IC_ENTRY;
-@@ -1043,7 +1150,7 @@
+@@ -1043,7 +1151,7 @@
  	if (custom_object) {
  		int ret;
  
@@ -4722,7 +4723,7 @@
  
  		if (ret && incomplete_class) {
  			php_store_class_name(rval, ZSTR_VAL(class_name), len2);
-@@ -1059,6 +1166,10 @@
+@@ -1059,6 +1167,10 @@
  	   return 0;
  	}
  
@@ -5212,7 +5213,7 @@
  	{
  	size_t len, maxlen;
  	char *str;
-@@ -1435,15 +1566,27 @@
+@@ -1435,15 +1566,28 @@
  		ZVAL_EMPTY_STRING(rval);
  	} else if (len == 1) {
  		ZVAL_INTERNED_STR(rval, ZSTR_CHAR((zend_uchar)*str));
@@ -5227,9 +5228,10 @@
 +		memcpy(ZSTR_VAL(zstr), str, len);
 +		ZSTR_VAL(zstr)[len] = '\0';
 +		if (as_key) {
-+			zstr = zend_new_interned_string(zstr);
-+			if (ZEND_HAS_OOM()) {
-+				return 0;
++			zend_string *known = zend_interned_string_find_permanent(zstr);
++			if (known) {
++				zend_string_release_ex(zstr, 0);
++				zstr = known;
 +			}
 +		}
 +		ZVAL_STR(rval, zstr);
@@ -5243,7 +5245,7 @@
  	{
  	*p = YYCURSOR;
  
-@@ -1459,7 +1602,9 @@
+@@ -1459,7 +1603,9 @@
  
  	return 1;
  }
