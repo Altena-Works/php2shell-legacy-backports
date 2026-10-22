@@ -144,17 +144,20 @@ after_pcre=$(podman exec "$container_id" curl -fsS --max-time 5 \
     printf 'Apache worker changed after preg_replace soft OOM\n' >&2; exit 1;
 }
 printf 'PCRE_REPLACE_NORMAL_AND_OOM_REPORTED\n'
-podman exec "$container_id" curl -sS --max-time 20 \
-    -o /tmp/pcre-match-limit.out 'http://127.0.0.1/normal-pcre-match-split.php?limit=1' >/dev/null
-pcre_match_result=$(podman exec "$container_id" tail -c 500 /tmp/pcre-match-limit.out)
-after_pcre_match=$(podman exec "$container_id" curl -fsS --max-time 5 \
-    http://127.0.0.1/normal-worker.php)
-[[ $pcre_match_result == *READY* && $pcre_match_result == *'Allowed memory size of 8388608 bytes exhausted'* && $pcre_match_result != *RETURNED* ]] || {
-    printf 'expected preg_match_all soft OOM and request abort missing: %s\n' "$pcre_match_result" >&2; exit 1;
-}
-[[ ${pre%%$'\n'*} == ${after_pcre_match%%$'\n'*} ]] || {
-    printf 'Apache worker changed after preg_match_all soft OOM\n' >&2; exit 1;
-}
+for mode in pattern offset set split; do
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o "/tmp/pcre-match-$mode.out" "http://127.0.0.1/normal-pcre-match-split.php?limit=$mode" >/dev/null
+    pcre_match_result=$(podman exec "$container_id" tail -c 500 "/tmp/pcre-match-$mode.out")
+    after_pcre_match=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $pcre_match_result == *READY* && $pcre_match_result == *'Allowed memory size of 8388608 bytes exhausted'* && $pcre_match_result != *RETURNED* ]] || {
+        printf 'expected %s PCRE soft OOM and request abort missing: %s\n' "$mode" "$pcre_match_result" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_pcre_match%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s PCRE soft OOM\n' "$mode" >&2; exit 1;
+    }
+    printf 'PCRE_%s_OOM_REPORTED\n' "$mode"
+done
 printf 'PCRE_MATCH_SPLIT_NORMAL_AND_OOM_REPORTED\n'
 normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-wordwrap-limit.php)
