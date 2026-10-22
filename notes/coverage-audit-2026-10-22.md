@@ -6,9 +6,15 @@
 
 ローカルの PHP 8.2.34 と 8.2.35 の `.c` / `.h` 差分から、追加行に `OOM`、`fallible`、`falloc`、`finit`、`finsert`、`fadd`、`RINIT`、`RSHUTDOWN` などが現れるファイルを抽出し、7.3.33 候補パッチの変更ファイルと照合した。この文字列による抽出は**調査対象の優先順位付け**であり、脆弱性の有無や移植の等価性を証明しない。異なる PHP 版でファイルや実装が存在しない場合もある。
 
-候補に変更がない該当ファイルは48件：Zend 6件、拡張41件、SAPI 1件。特に Zend の `zend_API.c`、`zend_compile.c`、`zend_operators.c`、`zend_smart_str.c` / `.h`、`zend_string.c`、拡張の JSON パーサ、PCRE、SimpleXML、SPL、mbstring、zlib、標準関数群は、7.3.33 に対応する経路の有無と防御上の同等性を個別に判定する必要がある。`main/streams/memory.c` は変更を追加したため件数から外れ、増分ビルドと指定経路の良性検査を通過した。候補に変更があるファイルも、行単位で等価性を確認したわけではない。
+候補に変更がない該当ファイルは48件：Zend 6件、拡張41件、SAPI 1件。7.3.33 の元ソースとファイル名を照合すると、46件は存在し、`ext/opcache/jit/zend_jit_disasm.c` と `sapi/fuzzer/fuzzer-sapi.c` の2件は存在しない。**存在する46件がすべて脆弱という意味ではなく、該当性と同等の対処を個別判定する必要がある。** 特に Zend の `zend_API.c`、`zend_compile.c`、`zend_operators.c`、`zend_smart_str.c` / `.h`、`zend_string.c`、拡張の JSON パーサ、PCRE、SimpleXML、SPL、mbstring、zlib、標準関数群を調べる。`main/streams/memory.c` は変更を追加したため件数から外れ、クリーンビルドと指定経路の良性検査を通過した。候補に変更があるファイルも、行単位で等価性を確認したわけではない。
 
 ## 現時点の検証境界
+
+### 7.3.33 の要求境界と Zend 基盤
+
+現行候補の `ext/session/session.c` では、multipart 開始時にセッションの要求状態を初期化し、進捗更新中の3種類の保存形式で不完全クラスとして復号・再符号化する。`php_session_rfc1867_update()` と cleanup は失敗時も `in_rfc1867_update` を解除し、multipart 終了時には進捗データを解放して `rfc1867_progress` を `NULL` に戻す。これは公式8.2.35の要求境界修正に対応する静的確認であり、すべての中断地点での実行時確認ではない。
+
+Zend側の未移植差分6ファイルを確認した。`zend_API.c` の `object_finit`、`zend_operators.c` の文字列小文字化、`zend_smart_str.c` / `.h` の失敗可能な拡張、`zend_string.c` の interned string 初期化、および `zend_compile.c` のそのフラグの初期化である。後者は7.3.33に同じAPIがないため単独で移植しても防御にならない。前者も呼び出し側と割当失敗後の所有権処理を結合して判定する必要があり、API名だけを追加して完了扱いにしない。
 
 - 7.3.33 現行候補は固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php の指定経路の正常系と良性OOMを確認。`array_pad` は公式の挿入ごとの失敗処理と異なる事前確保案であり、参照数を含む全状態の等価性は未判定。
 - 7.3.33 の前候補は Linux/amd64・Apache/mod_php で一部の正常系と良性OOM後のワーカー継続を確認した。CVE-2026-109618 の全OOM入口、CVE-2026-109619 の全要求境界は未確認。
