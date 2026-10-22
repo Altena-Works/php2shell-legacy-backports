@@ -8,19 +8,21 @@
 
 PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件とは別の問題と追記した。原因箇所・再現条件は非公開で、旧版への該当性と現候補の遮断可否は未確認。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
-公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read` と Cookie 値の追加処理など、該当する一部の経路を移植・検証した。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部などを移植・検証した。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。`nl2br`・`unpack`・`shmop_read`・Cookie・HTML の指定経路を検査。`file()`・`fgets`・CSV・XBM の正常系、`levenshtein` の旧版仕様を確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。`nl2br`・`unpack`・`shmop_read`・Cookie・HTML の指定経路を検査。`file()`・`fgets`・CSV・XBM・JSON復号の正常系、`levenshtein` の旧版仕様を確認 | 他の大型割当・再割当・拡張、upload progress 中の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の `ext/standard/file.c` と `image.c` に、公式8.2.35の行分割・CSV・XBMにおける保留 OOM 中断、`fgets` の失敗可能なコピー、SWF の失敗可能な再確保を移植した。現行候補 SHA-256 は `7deb56aafe788ae87d4603ae9b7344a450c3f36b4badffd130f3db14c6d613c6`。`/private/tmp/php-backport-73-file-image-clean/patch/7.3.33/` で固定済み元ソースへ fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` は SHA-256 `1c5f6a987189d032c2ff97a58de54bc4782a1e9f8aa3b6e2099954e8acffb9a1`。通常の `file()`・`fgets()`・`fgetcsv()`・XBM 画像判定を追加して確認した。各追加割当失敗と SWF 再確保失敗の個別動的検査、両 CVE の全経路遮断は未確認。
+7.3.33 の JSON パーサで、オブジェクト生成を失敗可能にし、オブジェクト・配列生成の失敗および要素・属性追加後の保留 OOM で解析を中断するよう変更した。`json_parser.y` と生成済み `json_parser.tab.c` を整合させ、既存の Zend 基盤差分との重複 hunk を統合した。現行候補 SHA-256 は `5b5660ba9e327b8b603b60df2da8b3fddaf0a83701829ee85deb1e6b5630ce0c`。`/private/tmp/php-backport-73-json-clean2/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php チェックが `pass`。`libphp7.so` SHA-256 は `15b3ad5b2a3e09dd3695c3d3a5e98ed670a9df9a5438ca0ecb9e28bf7a153b1b`。通常のネストした JSON 復号と、大きな正常 JSON 配列の良性 OOM 後の同一ワーカー継続を確認した。OOM の発生地点と、公式の失敗可能なハッシュ挿入 API に対する等価性は未確認。
+
+直前の候補では、7.3.33 の `ext/standard/file.c` と `image.c` に、公式8.2.35の行分割・CSV・XBMにおける保留 OOM 中断、`fgets` の失敗可能なコピー、SWF の失敗可能な再確保を移植した。現行候補 SHA-256 は `7deb56aafe788ae87d4603ae9b7344a450c3f36b4badffd130f3db14c6d613c6`。`/private/tmp/php-backport-73-file-image-clean/patch/7.3.33/` で固定済み元ソースへ fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` は SHA-256 `1c5f6a987189d032c2ff97a58de54bc4782a1e9f8aa3b6e2099954e8acffb9a1`。通常の `file()`・`fgets()`・`fgetcsv()`・XBM 画像判定を追加して確認した。各追加割当失敗と SWF 再確保失敗の個別動的検査、両 CVE の全経路遮断は未確認。
 
 直前の HTML・`levenshtein` 検証候補 SHA-256 は `95acbbb11ca1ad8e0f3b442396ffe8ce9abdd00b0c33ad8f3aef1845ec3a4abd`。`/private/tmp/php-backport-73-html-lev-clean-fixed/patch/7.3.33/` で固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成した `libphp7.so` の SHA-256 は `cd95741c5e85c951d6907e079e357316ca135845b9f39785952d9ebfabac5b60`。3保存形式の通常セッション・multipart進捗、JSON、`array_chunk`・`array_map`・`array_pad`・`php://memory`・`nl2br`・`unpack` の正常系と良性OOM、upload progress 中のセッション復号OOM後の同一ワーカー継続を確認した。`shmop` を有効化したビルドで通常の読み書きと12MiB読み取り時の良性OOMを確認した。Cookie ヘッダーの通常設定と大型の生値を追加する際の良性OOMも確認した。HTML 変換は初期確保と旧版固有の2つの再確保を失敗可能にし、通常変換と大型入力時の良性OOMを確認した。`levenshtein` は失敗可能な作業配列確保を追加し、通常値・重み付き値・旧版の長さ超過を確認した。OOM 後はいずれも同一ワーカーが継続した。HTML の再確保2地点と `levenshtein` の割当失敗を個別に発生させる動的検査は未実施。**これらは指定構成・指定経路の検証であり、全入口・全拡張の遮断証明ではない。**
 

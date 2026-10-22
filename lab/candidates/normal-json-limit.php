@@ -1,9 +1,24 @@
 <?php
-if (!isset($_GET['limit']) && !isset($_GET['escape'])) {
+if (!isset($_GET['limit']) && !isset($_GET['escape']) && !isset($_GET['decode'])) {
     $encoded = json_encode(array('name' => 'ordinary', 'items' => array(1, 2)), JSON_PARTIAL_OUTPUT_ON_ERROR);
     $partial = json_encode(array('name' => "\xff"), JSON_PARTIAL_OUTPUT_ON_ERROR);
+    $decoded_object = json_decode('{"name":"ordinary","items":[1,2]}');
+    $decoded_array = json_decode('{"name":"ordinary","items":[1,2]}', true);
     echo $encoded === '{"name":"ordinary","items":[1,2]}'
-        && $partial === '{"name":null}' ? "JSON_OK\n" : "JSON_BAD\n";
+        && $partial === '{"name":null}'
+        && $decoded_object->name === 'ordinary' && $decoded_object->items === [1, 2]
+        && $decoded_array === ['name' => 'ordinary', 'items' => [1, 2]]
+        ? "JSON_OK\n" : "JSON_BAD\n";
+    return;
+}
+
+if (isset($_GET['decode'])) {
+    ini_set('memory_limit', '16M');
+    $value = '[' . str_repeat('0,', 1200000) . '0]';
+    ini_set('memory_limit', '8M');
+    echo "READY\n";
+    json_decode($value);
+    echo "RETURNED\n";
     return;
 }
 

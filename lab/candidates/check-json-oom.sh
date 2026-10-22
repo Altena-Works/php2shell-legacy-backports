@@ -39,7 +39,7 @@ normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-json-limit.php)
 [[ $normal == JSON_OK ]] || { printf 'normal JSON failed: %s\n' "$normal" >&2; exit 1; }
 
-for mode in limit escape; do
+for mode in limit escape decode; do
     podman exec "$container_id" curl -sS --max-time 20 \
         -o /tmp/json-limit.out "http://127.0.0.1/normal-json-limit.php?$mode=1" >/dev/null
     limited=$(podman exec "$container_id" tail -c 500 /tmp/json-limit.out)
