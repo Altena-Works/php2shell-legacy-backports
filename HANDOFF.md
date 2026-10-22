@@ -20,7 +20,7 @@ PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件と�
 
 ## 最新の検証
 
-7.3.33 の `ext/pcre/php_pcre.c` で `preg_replace` の結果バッファ確保・再確保を失敗可能にし、失敗時に保有バッファを解放して解析を中断する。現行候補 SHA-256 は `f669c5bfd73b8ab20eb0b9af013f9d64d958d6345c3068b728ecfd00b1cb9278`。`/private/tmp/php-backport-73-pcre-clean/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `d9c86af6077f748510f7f457666d9bd5ed79d383daf1d0043eced06e1aa7f5d9`。通常の `preg_replace` と、大きな正常入力による良性 OOM 後の同一ワーカー継続を確認した。PCRE のマッチ・分割・コールバック置換や各再確保地点の個別失敗は未判定。
+7.3.33 の `ext/pcre/php_pcre.c` で `preg_replace` とコールバック置換の結果バッファ確保・再確保を失敗可能にし、失敗時に保有バッファを解放して解析を中断する。コールバック引数構築中の保留OOMも関数呼出し前に中断する。現行候補 SHA-256 は `444defa3d4e06eaf07d469b10f6c2d555229ff4b6246043e00d9d7e102eb0cfe`。`/private/tmp/php-backport-73-pcre-callback-clean/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `181bc3c0cce4f39aa77a12c8562aeba01621945a29646e78d1f7003b0d1c4411`。通常の `preg_replace`・コールバック置換と、大きな正常入力による良性 OOM 後の同一ワーカー継続を確認した。PCRE のマッチ・分割、コールバック処理中の各 OOM 発生地点、各再確保地点の個別失敗は未判定。
 
 同じクリーンビルドで、通常セッション・multipart・upload progress、3保存形式、JSON復号と良性OOM、`unserialize` の許可クラス・長いキー、ファイル・画像・文字列・配列の既存チェック、セッション復号OOM後の同一ワーカー継続を確認した。これは指定経路の結果であり、両CVEの全入口・要求間状態の遮断証明ではない。先行候補ごとのハッシュ、失敗地点と検査内容は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に移した。
 
