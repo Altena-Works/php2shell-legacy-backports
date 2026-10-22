@@ -6337,3 +6337,60 @@
  				buckets_out, bucket->buf, bucket->buflen, &consumed,
  				php_stream_is_persistent(stream)) != SUCCESS) {
  			goto out_failure;
+--- a/ext/dom/xpath.c
++++ b/ext/dom/xpath.c
+@@ -432,7 +432,10 @@
+ 
+ 			if (xpathobjp->type == XPATH_NODESET && NULL != (nodesetp = xpathobjp->nodesetval) && nodesetp->nodeNr) {
+ 
+-				array_init(&retval);
++				array_init_size(&retval, nodesetp->nodeNr);
++				if (UNEXPECTED(!zend_hash_real_finit(Z_ARRVAL(retval), 1))) {
++					goto oom_nodeset;
++				}
+ 				for (i = 0; i < nodesetp->nodeNr; i++) {
+ 					xmlNodePtr node = nodesetp->nodeTab[i];
+ 					zval child;
+@@ -457,6 +460,9 @@
+ 					}
+ 					php_dom_create_object(node, &child, &intern->dom);
+ 					add_next_index_zval(&retval, &child);
++					if (ZEND_HAS_OOM()) {
++						goto oom_nodeset;
++					}
+ 				}
+ 			} else {
+ 				ZVAL_EMPTY_ARRAY(&retval);
+@@ -465,6 +471,13 @@
+ 			nodeobj = Z_DOMOBJ_P(return_value);
+ 			dom_xpath_iter(&retval, nodeobj);
+ 			break;
++
++oom_nodeset:
++			zval_ptr_dtor(&retval);
++			xmlXPathFreeObject(xpathobjp);
++			zval_ptr_dtor(return_value);
++			ZVAL_NULL(return_value);
++			RETURN_OOM();
+ 		}
+ 
+ 		case XPATH_BOOLEAN:
+--- a/ext/xmlwriter/php_xmlwriter.c
++++ b/ext/xmlwriter/php_xmlwriter.c
+@@ -1811,7 +1811,15 @@
+ 		}
+ 		output_bytes = xmlTextWriterFlush(ptr);
+ 		if (buffer) {
+-			RETVAL_STRING((char *) buffer->content);
++			const char *content = (const char *) buffer->content;
++			size_t content_len = strlen(content);
++			zend_string *ret = zend_string_safe_falloc(1, content_len, 0, 0);
++			if (UNEXPECTED(ret == NULL)) {
++				RETURN_OOM();
++			}
++			memcpy(ZSTR_VAL(ret), content, content_len);
++			ZSTR_VAL(ret)[content_len] = '\0';
++			RETVAL_NEW_STR(ret);
+ 			if (empty) {
+ 				xmlBufferEmpty(buffer);
+ 			}

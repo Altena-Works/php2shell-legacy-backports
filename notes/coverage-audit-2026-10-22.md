@@ -32,6 +32,10 @@
 
 `ext/iconv/iconv.c` では、公式差分に対応する変換結果と MIME ヘッダー用バッファの失敗可能な確保・拡張、ヘッダー反復とフィルター処理の保留 OOM 判定を旧版の API に合わせて追加した。GNU iconv 以外の分岐にある変換結果バッファも同じ失敗処理に変更した。固定ソースへの厳密適用、iconv 有効の Linux/amd64・Apache/mod_php クリーンビルド、通常の `iconv`・`iconv_mime_encode`・変換フィルターと、4 MiB の良性入力を8 MiB制限下でUTF-16LEへ変換したときの soft OOM 後の同一 worker 継続を確認した。これは一つの割当失敗条件に限り、MIME・フィルターの個別 OOM 地点と非 GNU iconv の実行時動作は未判定。
 
+`ext/dom/xpath.c` のXPathノード集合を返す配列は、公式差分に対応して旧版の `zend_hash_real_finit` で失敗可能に初期化し、要素追加後の保留OOMでは部分配列とXPath結果を解放する。`ext/xmlwriter/php_xmlwriter.c` のメモリ出力は失敗可能な文字列確保に変更した。DOM・XMLWriter 有効の固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、通常のDOM XPath結果とXMLWriter出力、12 MiB の良性出力に対する8 MiB制限下のXMLWriter soft OOM 後の同一 worker 継続を確認した。XPath配列の割当失敗地点とノード生成中のOOMは未実測で、DOM全体の同等性は未判定。
+
+`ext/xml/xml.c` は引き続き未変更。公式8.2系で既に存在する `ltags` のゼロ初期化が7.3.33にはないため、OOM時の早期終了だけを移すと未初期化ポインタの解放につながる。開始・終了・文字データ以外のコールバックも引数を確保する旧版経路があり、次の移植では配列初期化、コールバック中断、解放順序を一組として扱う。
+
 追加候補では `zlib_filter.c` の2か所の保留OOM中断と、`main/streams/streams.c` のフィルター入力・読取バッファ・結果文字列の失敗可能な確保を移した。最初の候補は `stream_get_contents()` による良性の大容量展開で Apache worker が hard OOM により終了した。読取バッファと結果文字列の再確保を変更後、指定経路で soft OOM と同一 worker 継続を確認した。さらにフィルター入力バッファと区切り文字付き読取の返却文字列を公式差分に合わせ、後述のセッション復号修正も含めて固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、版別チェックを通過した。同じバイナリで通常フィルター動作と良性OOM後の同一 worker 継続を確認。個別の割当失敗地点と zlib 圧縮中のOOMは未判定。
 
 ### 8.5.12 の二重解放報告

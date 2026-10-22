@@ -13,14 +13,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。zlib・SimpleXML・iconv の指定経路で良性OOM後の同一 worker 継続、3保存形式の通常 multipart と予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 他の大型割当・再割当・拡張、upload progress 中の他の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。zlib・SimpleXML・iconv・XMLWriter の指定経路で良性OOM後の同一 worker 継続、3保存形式の通常 multipart と予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 他の大型割当・再割当・拡張、upload progress 中の他の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `5a5f3f3fb17d607cafd8cf3242a905848a69487b0bc31ae9f226da1ea087af3c`。`/private/tmp/php-backport-73-iconv-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、iconv・libxml・SimpleXML を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `32119c788e3a692a97809955f83374c1b23e428047b317a3696acdcf0762e9b2`。同じバイナリで通常 iconv 変換・MIME・ストリームフィルター、良性 iconv OOM 後の要求中断・同一 worker 継続、通常 XML と良性 SimpleXML OOM、zlib フィルター OOM、3保存形式の通常機能・予約名プロパティ保持、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-iconv-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限る。
+7.3.33 の現候補 SHA-256 は `057c4c0286e249ba2c6db4c66cc82ba97e562376b0e8356d3512e045ff361d78`。`/private/tmp/php-backport-73-dom-xmlwriter-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、DOM・XMLWriter・iconv・libxml・SimpleXML を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `ff52236d7e798df1d7d118db42bb223219a1dfbb037225259769a654e05365d3`。同じバイナリで通常 DOM XPath・XMLWriter 出力、良性 XMLWriter OOM 後の要求中断・同一 worker 継続、通常 iconv・SimpleXML とそれぞれの指定 OOM、zlib フィルター OOM、3保存形式の通常機能・予約名プロパティ保持、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-dom-xmlwriter-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限る。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
@@ -30,7 +30,7 @@
 
 ## 次の作業
 
-1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。特に upload progress 中の他の復号 OOM 地点と要求間状態を判定し、公式修正に対応する未判定ファイルを一つずつ閉じる。SimpleXML は指定経路が通過したが、各割当失敗地点と iterator 所有権の全状態は未判定。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかに push する。
+1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。次は `ext/xml/xml.c` のSAXコールバックとタグ配列の初期化・解放を一組で移植する。upload progress 中の他の復号 OOM 地点と要求間状態を判定し、公式修正に対応する未判定ファイルを閉じる。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかに push する。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
