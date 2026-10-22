@@ -38,6 +38,8 @@
 
 `ext/json/json_scanner.re` と生成済み `json_scanner.c` では、公式8.2.35がJSON文字列用確保を失敗可能にした一箇所を7.3.33の `zend_string_safe_falloc()` へ移した。固定ソースへのfuzzなし適用、Linux/amd64・Apache/mod_phpクリーンビルド、通常JSON復号、良性の長いJSON文字列で8MiB制限に達した後の同一ワーカー再利用を確認した。`bz2.c` と `bz2_filter.c` の公式差分は移植対象だが、既存の隔離ビルダーにbzip2開発ファイルがなく、実行検証可能な候補にはまだ組み込んでいない。
 
+`tokenizer/tokenizer.c` は7.3.33にも存在し、通常の `token_get_all()` と `TOKEN_PARSE` の両経路が `add_token()` を呼ぶ。8.2.35の公式修正は、トークン文字列の確保失敗を呼び出し元へ返し、字句解析を止める。7.3.33候補でも文字列を失敗可能に確保してからトークンへ組み込み、通常経路は失敗時に走査を止めて部分的な結果を破棄し、`TOKEN_PARSE` はコールバックで失敗状態を保持して結果を破棄するよう変更した。前候補SHA-256 `10ef30f65b80a5ebb5dba439070f3c9d03e624136cee1e2d77de0fd1eba263b1` は、tokenizer有効のLinux/amd64・Apache/mod_phpでクリーンビルドと版別チェックを通過。その後に結果破棄を補った現候補SHA-256 `1283042989adc88f99a2117c1fb17869c61d855b2d21c4e04be5aa42f18c1a97` は固定元ソースへfuzzなし適用し、同じ構成で増分ビルド、通常モードと `TOKEN_PARSE` の良性HTTP入力で `TOKEN_NORMAL_OK` を確認した。現候補のクリーンビルドとトークン文字列の確保失敗地点・解析中断は未実測であり、この経路の遮断はまだ確定していない。
+
 追加候補では `zlib_filter.c` の2か所の保留OOM中断と、`main/streams/streams.c` のフィルター入力・読取バッファ・結果文字列の失敗可能な確保を移した。最初の候補は `stream_get_contents()` による良性の大容量展開で Apache worker が hard OOM により終了した。読取バッファと結果文字列の再確保を変更後、指定経路で soft OOM と同一 worker 継続を確認した。さらにフィルター入力バッファと区切り文字付き読取の返却文字列を公式差分に合わせ、後述のセッション復号修正も含めて固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、版別チェックを通過した。同じバイナリで通常フィルター動作と良性OOM後の同一 worker 継続を確認。個別の割当失敗地点と zlib 圧縮中のOOMは未判定。
 
 ### 8.5.12 の二重解放報告

@@ -6702,3 +6702,160 @@
  		ZSTR_VAL(str)[len] = '\0';
  		ZVAL_STR(&s->value, str);
  		if (s->str_esc || s->utf8_invalid) {
+--- a/ext/tokenizer/tokenizer.c
++++ b/ext/tokenizer/tokenizer.c
+@@ -104,22 +104,31 @@
+ }
+ /* }}} */
+ 
+-static void add_token(zval *return_value, int token_type,
++static zend_bool add_token(zval *return_value, int token_type,
+ 		unsigned char *text, size_t leng, int lineno) {
++	zend_string *value;
++
++	if (token_type < 256 && leng == 1) {
++		add_next_index_str(return_value, ZSTR_CHAR(text[0]));
++		return 1;
++	}
++	value = zend_string_safe_falloc(leng, 1, 0, 0);
++	if (UNEXPECTED(value == NULL)) {
++		return 0;
++	}
++	memcpy(ZSTR_VAL(value), text, leng);
++	ZSTR_VAL(value)[leng] = '\0';
+ 	if (token_type >= 256) {
+ 		zval keyword;
+ 		array_init(&keyword);
+ 		add_next_index_long(&keyword, token_type);
+-		add_next_index_stringl(&keyword, (char *) text, leng);
++		add_next_index_str(&keyword, value);
+ 		add_next_index_long(&keyword, lineno);
+ 		add_next_index_zval(return_value, &keyword);
+ 	} else {
+-		if (leng == 1) {
+-			add_next_index_str(return_value, ZSTR_CHAR(text[0]));
+-		} else {
+-			add_next_index_stringl(return_value, (char *) text, leng);
+-		}
++		add_next_index_str(return_value, value);
+ 	}
++	return 1;
+ }
+ 
+ static zend_bool tokenize(zval *return_value, zend_string *source)
+@@ -130,6 +139,7 @@
+ 	int token_type;
+ 	int token_line = 1;
+ 	int need_tokens = -1; /* for __halt_compiler lexing. -1 = disabled */
++	zend_bool success = 1;
+ 
+ 	ZVAL_STR_COPY(&source_zval, source);
+ 	zend_save_lexical_state(&original_lex_state);
+@@ -143,7 +153,13 @@
+ 	array_init(return_value);
+ 
+ 	while ((token_type = lex_scan(&token, NULL))) {
+-		add_token(return_value, token_type, zendtext, zendleng, token_line);
++		if (!add_token(return_value, token_type, zendtext, zendleng, token_line)) {
++			success = 0;
++			if (Z_TYPE(token) != IS_UNDEF) {
++				zval_ptr_dtor_nogc(&token);
++			}
++			break;
++		}
+ 
+ 		if (Z_TYPE(token) != IS_UNDEF) {
+ 			zval_ptr_dtor_nogc(&token);
+@@ -158,8 +174,10 @@
+ 			) {
+ 				/* fetch the rest into a T_INLINE_HTML */
+ 				if (zendcursor != zendlimit) {
+-					add_token(return_value, T_INLINE_HTML,
+-						zendcursor, zendlimit - zendcursor, token_line);
++					if (!add_token(return_value, T_INLINE_HTML,
++						zendcursor, zendlimit - zendcursor, token_line)) {
++						success = 0;
++					}
+ 				}
+ 				break;
+ 			}
+@@ -178,15 +196,29 @@
+ 	zval_ptr_dtor_str(&source_zval);
+ 	zend_restore_lexical_state(&original_lex_state);
+ 
+-	return 1;
++	if (!success) {
++		zval_ptr_dtor(return_value);
++		ZVAL_UNDEF(return_value);
++	}
++	return success;
+ }
+ 
++struct event_context {
++	zval *tokens;
++	zend_bool oom;
++};
++
+ void on_event(zend_php_scanner_event event, int token, int line, void *context)
+ {
+-	zval *token_stream = (zval *) context;
++	struct event_context *ctx = (struct event_context *) context;
++	zval *token_stream = ctx->tokens;
+ 	HashTable *tokens_ht;
+ 	zval *token_zv;
+ 
++	if (UNEXPECTED(ctx->oom)) {
++		return;
++	}
++
+ 	switch (event) {
+ 		case ON_TOKEN:
+ 			{
+@@ -197,7 +229,9 @@
+ 				} else if (token == T_ECHO && LANG_SCNG(yy_leng) == sizeof("<?=") - 1) {
+ 					token = T_OPEN_TAG_WITH_ECHO;
+ 				}
+-				add_token(token_stream, token, LANG_SCNG(yy_text), LANG_SCNG(yy_leng), line);
++				if (!add_token(token_stream, token, LANG_SCNG(yy_text), LANG_SCNG(yy_leng), line)) {
++					ctx->oom = 1;
++				}
+ 			}
+ 			break;
+ 		case ON_FEEDBACK:
+@@ -209,8 +243,10 @@
+ 			break;
+ 		case ON_STOP:
+ 			if (LANG_SCNG(yy_cursor) != LANG_SCNG(yy_limit)) {
+-				add_token(token_stream, T_INLINE_HTML, LANG_SCNG(yy_cursor),
+-					LANG_SCNG(yy_limit) - LANG_SCNG(yy_cursor), CG(zend_lineno));
++				if (!add_token(token_stream, T_INLINE_HTML, LANG_SCNG(yy_cursor),
++					LANG_SCNG(yy_limit) - LANG_SCNG(yy_cursor), CG(zend_lineno))) {
++					ctx->oom = 1;
++				}
+ 			}
+ 			break;
+ 	}
+@@ -231,17 +267,21 @@
+ 
+ 	if ((success = (zend_prepare_string_for_scanning(&source_zval, "") == SUCCESS))) {
+ 		zval token_stream;
++		struct event_context ctx;
+ 		array_init(&token_stream);
++		ctx.tokens = &token_stream;
++		ctx.oom = 0;
+ 
+ 		CG(ast) = NULL;
+ 		CG(ast_arena) = zend_arena_create(1024 * 32);
+ 		LANG_SCNG(yy_state) = yycINITIAL;
+ 		LANG_SCNG(on_event) = on_event;
+-		LANG_SCNG(on_event_context) = &token_stream;
++		LANG_SCNG(on_event_context) = &ctx;
+ 
+-		if((success = (zendparse() == SUCCESS))) {
++		if((success = (zendparse() == SUCCESS)) && !ctx.oom) {
+ 			ZVAL_COPY_VALUE(return_value, &token_stream);
+ 		} else {
++			success = 0;
+ 			zval_ptr_dtor(&token_stream);
+ 		}
+ 

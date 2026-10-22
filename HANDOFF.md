@@ -8,7 +8,7 @@
 
 追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。[PHP公式の検証済み Issue #24488](https://github.com/php/php-src/issues/24488)のSimpleXML/GC二重解放は、8.4.27/8.5.12の別件回帰。固定したPHP 5〜7最終版の元アーカイブ12件には原因となるGH-24050のGC追加処理がなく、[版別判定](notes/double-free-24488-triage.md)では直接該当しない。SNS画像との同一性や旧版固有の別経路は未判定。記事内のZIP・PoCは取得も実行もしていない。
 
-公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部などを移植・検証した。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizerなどを移植・限定検証した。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `96788089942611ce9840692246fcd0399bb60d027bed19f8dfe6f092d18206a4`。`/private/tmp/php-backport-73-json-scanner-clean/patch/7.3.33/` で固定ソースへfuzzなし適用し、Linux/amd64クリーンビルドとApache/mod_php版別チェックが `pass`。通常JSON復号、良性の長いJSON文字列でのOOM後の同一ワーカー再利用を確認した。前候補のExpat/libxml両構成の結果は `/private/tmp/php-backport-73-expat-clean/patch/7.3.33/` と `/private/tmp/php-backport-73-expat-libxml-clean/patch/7.3.33/` にあり、同じXML修正を含むが現候補ハッシュとは異なる。いずれも指定した入力と失敗地点に限る。
+7.3.33 の現候補 SHA-256 は `1283042989adc88f99a2117c1fb17869c61d855b2d21c4e04be5aa42f18c1a97`。固定ソースへのfuzzなし dry-run、tokenizer有効のLinux/amd64・Apache/mod_phpで増分ビルド、通常モードと `TOKEN_PARSE` の良性HTTPで `TOKEN_NORMAL_OK` を確認した。結果配列の後始末を追加する前の候補 `10ef30f65b80a5ebb5dba439070f3c9d03e624136cee1e2d77de0fd1eba263b1` は `/private/tmp/php-backport-73-tokenizer-clean2/patch/7.3.33/` でクリーンビルドと版別チェックが `pass`。現候補のクリーンビルド、トークン文字列の確保失敗地点は未実測。前候補のJSON長文字列OOMとExpat/libxml両構成の結果も異なる候補ハッシュの実測であり、現候補へそのまま拡張しない。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
@@ -43,6 +43,7 @@ GitHub への次回 push は保留。新しい eMudhra CA 信頼禁止規定に�
 
 ## 参照先
 
+- [5ターンの実行計画](notes/five-turn-execution-2026-10-22.md)
 - [設計と版別状態](BACKPORT-DESIGN.md)
 - [候補の説明](lab/candidates/README.md)
 - [検証ラボ](lab/README.md)
