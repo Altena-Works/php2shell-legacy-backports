@@ -4,7 +4,9 @@ set -euo pipefail
 source_tree=${1:?patched or baseline PHP source tree required}
 version=${2:?PHP version required}
 expected_progress=${3:?PROGRESS_PRESENT or PROGRESS_ABSENT required}
+verify_final=${4:-}
 [[ $expected_progress == PROGRESS_PRESENT || $expected_progress == PROGRESS_ABSENT ]]
+[[ -z $verify_final || $verify_final == VERIFY_FINAL ]]
 
 case $version in
     5.*) image=localhost/php-backport-build:5.6 ;;
@@ -60,3 +62,10 @@ result=$(podman exec "$container_id" bash -lc '
 ')
 printf '%s\n' "$result"
 [[ $result == $'MULTIPART_OK\nSESSION_OK\n'"$expected_progress" ]]
+
+if [[ $verify_final == VERIFY_FINAL ]]; then
+    final=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        -b /tmp/php-cookies 'http://127.0.0.1/normal-progress-state.php?final=1')
+    printf '%s\n' "$final"
+    [[ $final == $'SESSION_OK\nPROGRESS_PRESENT\nPROGRESS_COMPLETE' ]]
+fi

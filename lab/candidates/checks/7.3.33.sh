@@ -10,7 +10,7 @@ case "$version" in
 esac
 script_dir=$(cd "$(dirname "$(realpath "$0")")/../.." && pwd)
 
-"$script_dir/check-multipart-progress.sh" "$source_tree" "$version" PROGRESS_PRESENT
+"$script_dir/check-multipart-progress.sh" "$source_tree" "$version" PROGRESS_PRESENT VERIFY_FINAL
 
 set -- "$source_tree"/libs/libphp*.so
 [[ $# -eq 1 && -f $1 ]] || exit 2

@@ -22,4 +22,6 @@
 
 `checks/5.6.40.sh` と `checks/7.3.33.sh` は候補専用の正常系確認です。通常の multipart/upload progress と、既存セッション内の無害な `Serializable` 値が更新後も読めることを確認します。脆弱性の遮断を証明するテストではありません。`lab/run-matrix.sh` の `--patch-dir` / `--check-dir` には、候補を版名に合わせて配置した一時ディレクトリを渡します。チェックはリポジトリ内の良性フィクスチャを読むため、一時ディレクトリへはコピーせずシンボリックリンクで配置します。既存の検証結果と混ざらない新しい `--results-dir` を指定してください。
 
+7.3.33 の版別確認では、通常の multipart 終了後に進捗の `done=true` と `bytes_processed=content_length` も確かめます。Linux/amd64・Apache/mod_php で通過しました。これは最終進捗の正常動作を示す検査であり、OOM や異常終了時の両 CVE の遮断証明ではありません。8.2.34→8.2.35 の `ext/standard/array.c` 差分にある配列割当の失敗可能処理は、現候補には未移植です。
+
 2026-10-22 の追加差分では、公式 8.2.35 と同じ終了境界で、post-RSHUTDOWN 後に再設定され得る `last_error_message` と `last_error_file` をメモリ管理終了前に消去します。変更した `main/main.c` は既存の Linux/amd64 ビルド木で増分コンパイルし、上記の正常系を再実行して通過しました。後処理中の診断を動的に起こした確認や、CVE-2026-109619 の全入口の遮断確認は未実施です。
