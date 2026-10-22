@@ -4,5 +4,5 @@ RUN printf 'deb http://snapshot.debian.org/archive/debian/20221114T000000Z bulls
     && printf 'deb http://snapshot.debian.org/archive/debian-security/20221114T000000Z bullseye-security main\n' >> /etc/apt/sources.list \
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
-        apache2-dev autoconf build-essential libbz2-dev libcurl4-openssl-dev libxml2-dev patch pkg-config re2c zlib1g-dev \
+        apache2-dev autoconf build-essential libbz2-dev libcurl4-openssl-dev libpng-dev libxml2-dev patch pkg-config re2c zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
