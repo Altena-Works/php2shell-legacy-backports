@@ -27,6 +27,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-array-map-limit.php:/var/www/html/normal-array-map-limit.php:ro" \
     -v "$script_dir/normal-array-pad-array-limit.php:/var/www/html/normal-array-pad-array-limit.php:ro" \
     -v "$script_dir/normal-memory-stream-limit.php:/var/www/html/normal-memory-stream-limit.php:ro" \
+    -v "$script_dir/normal-spl-fixedarray-limit.php:/var/www/html/normal-spl-fixedarray-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -53,6 +54,22 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 [[ $pre == *$'\n'7.3.33$'\n'apache2handler ]] || exit 1
+
+normal_spl=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-spl-fixedarray-limit.php)
+[[ $normal_spl == SPL_OK ]] || { printf 'normal SplFixedArray failed: %s\n' "$normal_spl" >&2; exit 1; }
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/spl-limit.out 'http://127.0.0.1/normal-spl-fixedarray-limit.php?limit=1' >/dev/null
+spl_result=$(podman exec "$container_id" tail -c 500 /tmp/spl-limit.out)
+after_spl=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $spl_result == *READY* && $spl_result == *'Allowed memory size of 8388608 bytes exhausted'* && $spl_result != *RETURNED* ]] || {
+    printf 'expected SplFixedArray soft OOM and request abort missing: %s\n' "$spl_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_spl%%$'\n'*} ]] || {
+    printf 'Apache worker changed after SplFixedArray soft OOM\n' >&2; exit 1;
+}
+printf 'SPL_NORMAL_AND_OOM_REPORTED\n'
 
 normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-repeat-limit.php)

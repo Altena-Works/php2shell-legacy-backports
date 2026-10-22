@@ -5424,3 +5424,168 @@
  		/* If something matched */
  		if (count >= 0) {
  			/* Check for too many substrings condition. */
+--- a/ext/spl/spl_fixedarray.c
++++ b/ext/spl/spl_fixedarray.c
+@@ -78,30 +78,34 @@
+ 
+ #define Z_SPLFIXEDARRAY_P(zv)  spl_fixed_array_from_obj(Z_OBJ_P((zv)))
+ 
+-static void spl_fixedarray_init(spl_fixedarray *array, zend_long size) /* {{{ */
++static int spl_fixedarray_init(spl_fixedarray *array, zend_long size) /* {{{ */
+ {
+ 	if (size > 0) {
+-		array->size = 0; /* reset size in case ecalloc() fails */
+-		array->elements = ecalloc(size, sizeof(zval));
++		array->size = 0;
++		array->elements = _safe_femalloc(size, sizeof(zval), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		if (UNEXPECTED(!array->elements)) {
++			return FAILURE;
++		}
++		memset(array->elements, 0, size * sizeof(zval));
+ 		array->size = size;
+ 	} else {
+ 		array->elements = NULL;
+ 		array->size = 0;
+ 	}
++	return SUCCESS;
+ }
+ /* }}} */
+ 
+-static void spl_fixedarray_resize(spl_fixedarray *array, zend_long size) /* {{{ */
++static int spl_fixedarray_resize(spl_fixedarray *array, zend_long size) /* {{{ */
+ {
+ 	if (size == array->size) {
+ 		/* nothing to do */
+-		return;
++		return SUCCESS;
+ 	}
+ 
+ 	/* first initialization */
+ 	if (array->size == 0) {
+-		spl_fixedarray_init(array, size);
+-		return;
++		return spl_fixedarray_init(array, size);
+ 	}
+ 
+ 	/* clearing the array */
+@@ -117,7 +121,11 @@
+ 			array->elements = NULL;
+ 		}
+ 	} else if (size > array->size) {
+-		array->elements = safe_erealloc(array->elements, size, sizeof(zval), 0);
++		zval *elements = _safe_ferealloc(array->elements, size, sizeof(zval), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		if (UNEXPECTED(!elements)) {
++			return FAILURE;
++		}
++		array->elements = elements;
+ 		memset(array->elements + array->size, '\0', sizeof(zval) * (size - array->size));
+ 	} else { /* size < array->size */
+ 		zend_long i;
+@@ -125,10 +133,11 @@
+ 		for (i = size; i < array->size; i++) {
+ 			zval_ptr_dtor(&(array->elements[i]));
+ 		}
+-		array->elements = erealloc(array->elements, sizeof(zval) * size);
++		/* Keep the allocation: a failed shrink cannot restore destroyed elements. */
+ 	}
+ 
+ 	array->size = size;
++	return SUCCESS;
+ }
+ /* }}} */
+ 
+@@ -216,13 +225,6 @@
+ 	intern->current = 0;
+ 	intern->flags = 0;
+ 
+-	if (orig && clone_orig) {
+-		spl_fixedarray_object *other = Z_SPLFIXEDARRAY_P(orig);
+-		intern->ce_get_iterator = other->ce_get_iterator;
+-		spl_fixedarray_init(&intern->array, other->array.size);
+-		spl_fixedarray_copy(&intern->array, &other->array);
+-	}
+-
+ 	while (parent) {
+ 		if (parent == spl_ce_SplFixedArray) {
+ 			intern->std.handlers = &spl_handler_SplFixedArray;
+@@ -234,6 +236,15 @@
+ 		inherited = 1;
+ 	}
+ 
++	if (orig && clone_orig) {
++		spl_fixedarray_object *other = Z_SPLFIXEDARRAY_P(orig);
++		intern->ce_get_iterator = other->ce_get_iterator;
++		if (UNEXPECTED(spl_fixedarray_init(&intern->array, other->array.size) == FAILURE)) {
++			return &intern->std;
++		}
++		spl_fixedarray_copy(&intern->array, &other->array);
++	}
++
+ 	if (!parent) { /* this must never happen */
+ 		php_error_docref(NULL, E_COMPILE_ERROR, "Internal compiler error, Class is not child of SplFixedArray");
+ 	}
+@@ -557,7 +568,9 @@
+ 		return;
+ 	}
+ 
+-	spl_fixedarray_init(&intern->array, size);
++	if (UNEXPECTED(spl_fixedarray_init(&intern->array, size) == FAILURE)) {
++		RETURN_OOM();
++	}
+ }
+ /* }}} */
+ 
+@@ -577,7 +590,9 @@
+ 		int index = 0;
+ 		int size = zend_hash_num_elements(intern_ht);
+ 
+-		spl_fixedarray_init(&intern->array, size);
++		if (UNEXPECTED(spl_fixedarray_init(&intern->array, size) == FAILURE)) {
++			RETURN_OOM();
++		}
+ 
+ 		ZEND_HASH_FOREACH_VAL(intern_ht, data) {
+ 			ZVAL_COPY(&intern->array.elements[index], data);
+@@ -675,7 +690,9 @@
+ 			zend_throw_exception_ex(spl_ce_InvalidArgumentException, 0, "integer overflow detected");
+ 			return;
+ 		}
+-		spl_fixedarray_init(&array, tmp);
++		if (UNEXPECTED(spl_fixedarray_init(&array, tmp) == FAILURE)) {
++			RETURN_OOM();
++		}
+ 
+ 		ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(data), num_index, str_index, element) {
+ 			ZVAL_COPY_DEREF(&array.elements[num_index], element);
+@@ -685,14 +702,18 @@
+ 		zval *element;
+ 		zend_long i = 0;
+ 
+-		spl_fixedarray_init(&array, num);
++		if (UNEXPECTED(spl_fixedarray_init(&array, num) == FAILURE)) {
++			RETURN_OOM();
++		}
+ 
+ 		ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(data), element) {
+ 			ZVAL_COPY_DEREF(&array.elements[i], element);
+ 			i++;
+ 		} ZEND_HASH_FOREACH_END();
+ 	} else {
+-		spl_fixedarray_init(&array, 0);
++		if (UNEXPECTED(spl_fixedarray_init(&array, 0) == FAILURE)) {
++			RETURN_OOM();
++		}
+ 	}
+ 
+ 	object_init_ex(return_value, spl_ce_SplFixedArray);
+@@ -737,7 +758,9 @@
+ 
+ 	intern = Z_SPLFIXEDARRAY_P(object);
+ 
+-	spl_fixedarray_resize(&intern->array, size);
++	if (UNEXPECTED(spl_fixedarray_resize(&intern->array, size) == FAILURE)) {
++		RETURN_OOM();
++	}
+ 	RETURN_TRUE;
+ }
+ /* }}} */
