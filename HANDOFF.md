@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `a3bc4061fa7186980400220cdba03fa0e6e102a6a217aba71a50dd0f1a79fa6f`。前候補のtokenizer、CDF、cURL、SPL、セッション、XMLなどの版別検査は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に記録。
+7.3.33 の候補は `wordwrap()` の最終縮小を元の非失敗可能処理に戻した。これはレビューで指摘された、縮小時の一時確保が soft OOM を起こす回帰を避ける変更。固定元ソースへの fuzz なし dry-run は通過したが、この変更後のビルド・実機検査は未実施。前候補（SHA-256 `a3bc4061fa7186980400220cdba03fa0e6e102a6a217aba71a50dd0f1a79fa6f`）のtokenizer、CDF、cURL、SPL、セッション、XMLなどの版別検査は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に記録。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -30,7 +30,7 @@ EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結
 
 SOAPを7.3の旧APIに移した前候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は、固定元ソースへのfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェック `pass` を確認した。通常SOAP往復は `SOAP_OK`。大きな通常SOAP応答の8 MiB制限下でOOM報告と同一Apacheワーカーの次要求処理を確認した。実測はHTTP応答本文の経路のみで、chunked応答、引数・多次元復号や他の確保失敗地点は未検証。証拠は `/private/tmp/php-backport-73-soap-final-clean/patch/7.3.33/`。
 
-mbstring入力変換・正規表現の候補は、固定元ソースへfuzzなし適用、Linux/amd64・Apache/mod_phpのmbstring有効クリーンビルドと版別チェック `pass` を確認。通常 `mb_parse_str`・文字コード変換・置換は `MBSTRING_OK`、8 MiB制限下の良性入力変換・置換はOOM報告後も同一ワーカー継続。`/private/tmp/php-backport-73-mbstring-clean/patch/7.3.33/` に証拠を保存した。GET/Cookie/POSTの直接入口、callback・旧 `e` モードのOOM、libmbflのバッファ拡張とfilter/flush伝播は未検証・未実装。旧版の共有境界を追う必要がある。
+mbstring入力変換・正規表現の候補は、固定元ソースへfuzzなし適用、Linux/amd64・Apache/mod_phpのmbstring有効クリーンビルドと版別チェック `pass` を確認。通常 `mb_parse_str`・文字コード変換・置換は `MBSTRING_OK`、8 MiB制限下の良性入力変換・置換はOOM報告後も同一ワーカー継続。`/private/tmp/php-backport-73-mbstring-clean/patch/7.3.33/` に証拠を保存した。GET/Cookie/POSTの直接入口、callback・旧 `e` モードのOOMは未検証。libmbflにはバッファ拡張失敗、終端NUL追加失敗、filter/flush戻り値の消失が残る。PHP 7.3の割当器コールバックと装置・呼出元を一緒に修正し、実測する必要がある。
 
 ## 次の作業
 

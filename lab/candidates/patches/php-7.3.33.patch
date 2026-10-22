@@ -3548,22 +3548,6 @@
  				chk = (size_t) ((ZSTR_LEN(text) - current)/linelength) + 1;
  			}
  			/* when we hit an existing break, copy to new buffer, and
-@@ -1065,7 +1093,14 @@
- 
- 		ZSTR_VAL(newtext)[newtextlen] = '\0';
- 		/* free unused memory */
--		newtext = zend_string_truncate(newtext, newtextlen, 0);
-+		{
-+			zend_string *truncated = php_wordwrap_fresize(newtext, newtextlen);
-+			if (UNEXPECTED(truncated == NULL)) {
-+				zend_string_release(newtext);
-+				return;
-+			}
-+			newtext = truncated;
-+		}
- 
- 		RETURN_NEW_STR(newtext);
- 	}
 @@ -1087,6 +1122,9 @@
  	} else {
  		do {
