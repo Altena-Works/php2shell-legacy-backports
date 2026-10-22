@@ -4283,3 +4283,92 @@
  	}
  
  	if (distance < 0 && /* TODO */ ZEND_NUM_ARGS() != 3) {
+--- a/ext/standard/file.c
++++ b/ext/standard/file.c
+@@ -782,12 +782,18 @@
+ 			do {
+ 				p++;
+ parse_eol:
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				add_index_stringl(return_value, i++, s, p-s);
+ 				s = p;
+ 			} while ((p = memchr(p, eol_marker, (e-p))));
+ 		} else {
+ 			do {
+ 				int windows_eol = 0;
++				if (ZEND_HAS_OOM()) {
++					break;
++				}
+ 				if (p != ZSTR_VAL(target_buf) && eol_marker == '\n' && *(p - 1) == '\r') {
+ 					windows_eol++;
+ 				}
+@@ -801,7 +807,7 @@
+ 		}
+ 
+ 		/* handle any left overs of files without new lines */
+-		if (s != e) {
++		if (s != e && !ZEND_HAS_OOM()) {
+ 			p = e;
+ 			goto parse_eol;
+ 		}
+@@ -1037,8 +1043,15 @@
+ 		if (buf == NULL) {
+ 			RETURN_FALSE;
+ 		}
+-		// TODO: avoid reallocation ???
+-		RETVAL_STRINGL(buf, line_len);
++		/* Copying the stream buffer can double an already large allocation. */
++		str = zend_string_safe_falloc(1, line_len, 0, 0);
++		if (UNEXPECTED(!str)) {
++			efree(buf);
++			RETURN_OOM();
++		}
++		memcpy(ZSTR_VAL(str), buf, line_len);
++		ZSTR_VAL(str)[line_len] = '\0';
++		RETVAL_STR(str);
+ 		efree(buf);
+ 	} else if (argc > 1) {
+ 		if (len <= 0) {
+@@ -2123,6 +2136,10 @@
+ 
+ 		tptr = temp;
+ 
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
++
+ 		inc_len = (bptr < limit ? (*bptr == '\0' ? 1 : php_mblen(bptr, limit - bptr)): 0);
+ 		if (inc_len == 1) {
+ 			char *tmp = bptr;
+--- a/ext/standard/image.c
++++ b/ext/standard/image.c
+@@ -242,7 +242,14 @@
+ 
+ 		do {
+ 			szlength = ZSTR_LEN(bufz) * (1<<factor++);
+-			buf = erealloc(buf, szlength);
++			unsigned char *new_buf = _safe_ferealloc(buf, 1, szlength, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++			if (UNEXPECTED(!new_buf)) {
++				efree(b);
++				zend_string_release_ex(bufz, 0);
++				efree(buf);
++				return NULL;
++			}
++			buf = new_buf;
+ 			status = uncompress(buf, &szlength, (unsigned char *) ZSTR_VAL(bufz), ZSTR_LEN(bufz));
+ 		} while ((status==Z_BUF_ERROR)&&(factor<maxfactor));
+ 
+@@ -1031,6 +1038,11 @@
+ 		return 0;
+ 	}
+ 	while ((fline=php_stream_gets(stream, NULL, 0)) != NULL) {
++		if (ZEND_HAS_OOM()) {
++			efree(fline);
++			fline = NULL;
++			break;
++		}
+ 		iname = estrdup(fline); /* simple way to get necessary buffer of required size */
+ 		if (sscanf(fline, "#define %s %d", iname, &value) == 2) {
+ 			if (!(type = strrchr(iname, '_'))) {

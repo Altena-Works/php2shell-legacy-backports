@@ -16,6 +16,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-cookie-limit.php:/var/www/html/normal-cookie-limit.php:ro" \
     -v "$script_dir/normal-html-limit.php:/var/www/html/normal-html-limit.php:ro" \
     -v "$script_dir/normal-levenshtein.php:/var/www/html/normal-levenshtein.php:ro" \
+    -v "$script_dir/normal-file-image.php:/var/www/html/normal-file-image.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
     -v "$script_dir/normal-array-fill-limit.php:/var/www/html/normal-array-fill-limit.php:ro" \
@@ -83,6 +84,10 @@ normal_levenshtein=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-levenshtein.php)
 [[ $normal_levenshtein == LEVENSHTEIN_OK ]] || { printf 'normal Levenshtein failed: %s\n' "$normal_levenshtein" >&2; exit 1; }
 printf 'LEVENSHTEIN_NORMAL_REPORTED\n'
+normal_file_image=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-file-image.php)
+[[ $normal_file_image == FILE_IMAGE_OK ]] || { printf 'normal file/image handling failed: %s\n' "$normal_file_image" >&2; exit 1; }
+printf 'FILE_IMAGE_NORMAL_REPORTED\n'
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/shmop-limit.out 'http://127.0.0.1/normal-shmop.php?limit=1' >/dev/null
 shmop_result=$(podman exec "$container_id" tail -c 500 /tmp/shmop-limit.out)
