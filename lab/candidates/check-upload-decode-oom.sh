@@ -37,6 +37,14 @@ done
 seed=$(podman exec "$container_id" curl -fsS --max-time 10 \
     -c /tmp/php-cookies http://127.0.0.1/session-large-seed.php)
 [[ $seed == SEEDED ]] || exit 1
+session_before=$(podman exec "$container_id" bash -lc '
+    for dir in /tmp /var/lib/php/sessions; do
+        if [[ -d "$dir" ]]; then
+            find "$dir" -maxdepth 1 -type f -name "sess_*" -exec sha256sum {} +
+        fi
+    done | sort
+')
+[[ -n $session_before ]] || { printf 'seeded session file missing\n' >&2; exit 1; }
 
 podman exec "$container_id" bash -lc '
     printf ordinary > /tmp/note.txt
@@ -49,6 +57,13 @@ post=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-worker.php)
 upload_output=$(podman exec "$container_id" cat /tmp/upload.out)
 logs=$(podman logs "$container_id" 2>&1)
+session_after=$(podman exec "$container_id" bash -lc '
+    for dir in /tmp /var/lib/php/sessions; do
+        if [[ -d "$dir" ]]; then
+            find "$dir" -maxdepth 1 -type f -name "sess_*" -exec sha256sum {} +
+        fi
+    done | sort
+')
 [[ $logs == *'Allowed memory size of 8388608 bytes exhausted'* ]] || {
     printf 'upload session OOM was not observed\n' >&2; exit 1;
 }
@@ -58,4 +73,7 @@ logs=$(podman logs "$container_id" 2>&1)
 [[ $upload_output != *UPLOAD_OK* ]] || {
     printf 'upload script ran despite request-startup OOM\n' >&2; exit 1;
 }
-printf '%s\n' UPLOAD_SESSION_OOM_REPORTED SCRIPT_NOT_RUN WORKER_REUSED
+[[ $session_before == "$session_after" ]] || {
+    printf 'stored session changed after upload session OOM\n' >&2; exit 1;
+}
+printf '%s\n' UPLOAD_SESSION_OOM_REPORTED SCRIPT_NOT_RUN WORKER_REUSED SESSION_PRESERVED

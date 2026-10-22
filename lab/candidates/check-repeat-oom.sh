@@ -116,6 +116,18 @@ after_zlib_decode=$(podman exec "$container_id" curl -fsS --max-time 5 \
     printf 'Apache worker changed after zlib decode soft OOM\n' >&2; exit 1;
 }
 printf 'ZLIB_DECODE_OOM_REPORTED\n'
+podman exec "$container_id" curl -sS --max-time 30 \
+    -o /tmp/zlib-filter-limit.out 'http://127.0.0.1/normal-zlib-limit.php?limit=filter' >/dev/null
+zlib_filter_result=$(podman exec "$container_id" tail -c 500 /tmp/zlib-filter-limit.out)
+after_zlib_filter=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $zlib_filter_result == *READY* && $zlib_filter_result == *'Allowed memory size of 8388608 bytes exhausted'* && $zlib_filter_result != *RETURNED* ]] || {
+    printf 'expected zlib filter soft OOM and request abort missing: %s\n' "$zlib_filter_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_zlib_filter%%$'\n'*} ]] || {
+    printf 'Apache worker changed after zlib filter soft OOM\n' >&2; exit 1;
+}
+printf 'ZLIB_FILTER_OOM_REPORTED\n'
 
 normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-repeat-limit.php)

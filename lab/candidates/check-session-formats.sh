@@ -62,6 +62,23 @@ for serializer in php php_binary php_serialize; do
             exit 1
         }
         printf 'UNSERIALIZE_NORMAL_REPORTED\n'
+
+        reserved_result=$(podman exec "$container_id" bash -lc '
+            set -e
+            curl -fsS --max-time 5 -c /tmp/reserved-cookie -X POST \
+                "http://127.0.0.1/session-fixture.php?reserved=seed"
+            curl -fsS --max-time 15 -b /tmp/reserved-cookie \
+                -F PHP_SESSION_UPLOAD_PROGRESS=check -F title=ordinary \
+                -F "attachment=@/tmp/note.txt;filename=note.txt" \
+                http://127.0.0.1/normal-multipart.php
+            curl -fsS --max-time 5 -b /tmp/reserved-cookie \
+                "http://127.0.0.1/session-fixture.php?reserved=check"
+        ')
+        [[ $reserved_result == $'RESERVED_SEEDED\nMULTIPART_OK\nRESERVED_PRESERVED\nPROGRESS_ABSENT' ]] || {
+            printf 'reserved property session regression: %s\n' "$reserved_result" >&2
+            exit 1
+        }
+        printf 'RESERVED_SESSION_PRESERVED\n'
     fi
     podman stop --time 2 "$container_id" >/dev/null
     trap - EXIT

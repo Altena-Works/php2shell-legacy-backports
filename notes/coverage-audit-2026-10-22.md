@@ -26,7 +26,9 @@
 
 `ext/spl/spl_fixedarray.c` の配列初期化・拡張を失敗可能な割当へ変更し、各呼び出し元へ失敗を伝播させた。縮小では要素破棄後の再確保を避ける。`ext/curl/interface.c` の `CURLOPT_RETURNTRANSFER` 用受信バッファにも失敗可能な拡張を追加し、失敗を libcurl へ返す。7.3.33 を cURL 有効で Linux/amd64・Apache/mod_php クリーンビルドし、SPL とコンテナ内 `file://` cURL の通常動作・良性OOM後の同一ワーカー継続を確認した。SPL の複製・復元、cURL の別モードや個別失敗地点は未判定。
 
-`ext/zlib/zlib.c` は公式の失敗可能な圧縮初期確保、展開バッファ拡張、`gzfile` の保留OOM確認に対応した。7.3.33 の追加の初期確保・`deflate_add` 拡張も失敗可能にし、失敗時に保有バッファを解放して中断する。cURL と zlib 有効の Linux/amd64・Apache/mod_php クリーンビルド、通常の gzip 読み書き、逐次展開と一括展開中の良性OOM後の同一ワーカー継続を確認した。zlib の個別失敗地点、圧縮中のOOM、`zlib_filter.c` の経路は未判定。
+`ext/zlib/zlib.c` は公式の失敗可能な圧縮初期確保、展開バッファ拡張、`gzfile` の保留OOM確認に対応した。7.3.33 の追加の初期確保・`deflate_add` 拡張も失敗可能にし、失敗時に保有バッファを解放して中断する。cURL と zlib 有効の Linux/amd64・Apache/mod_php クリーンビルド、通常の gzip 読み書き、逐次展開と一括展開中の良性OOM後の同一ワーカー継続を確認した。zlib の個別失敗地点と圧縮中のOOMは未判定。
+
+追加候補では `zlib_filter.c` の2か所の保留OOM中断と、`main/streams/streams.c` のフィルター入力・読取バッファ・結果文字列の失敗可能な確保を移した。最初の候補は `stream_get_contents()` による良性の大容量展開で Apache worker が hard OOM により終了した。読取バッファと結果文字列の再確保を変更後、指定経路で soft OOM と同一 worker 継続を確認した。さらにフィルター入力バッファと区切り文字付き読取の返却文字列を公式差分に合わせ、後述のセッション復号修正も含めて固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、版別チェックを通過した。同じバイナリで通常フィルター動作と良性OOM後の同一 worker 継続を確認。個別の割当失敗地点と zlib 圧縮中のOOMは未判定。
 
 ### 8.5.12 の二重解放報告
 
@@ -35,6 +37,10 @@
 ### 7.3.33 の要求境界と Zend 基盤
 
 現行候補の `ext/session/session.c` では、multipart 開始時にセッションの要求状態を初期化し、進捗更新中の3種類の保存形式で不完全クラスとして復号・再符号化する。`php_session_rfc1867_update()` と cleanup は失敗時も `in_rfc1867_update` を解除し、multipart 終了時には進捗データを解放して `rfc1867_progress` を `NULL` に戻す。これは公式8.2.35の要求境界修正に対応する静的確認であり、すべての中断地点での実行時確認ではない。
+
+[PHP 8.5.12 の機能退行報告](https://github.com/php/php-src/issues/24493)では、制限付き復号が合法な予約名プロパティを拒否したとき、進捗処理が保存済みセッションを破棄する。[公開された修正候補](https://github.com/lazerg/php-src/commit/a45ffe71a56741579f648d969193bd027a783e36)はこの場合に更新だけを中止する。7.3.33 候補にも同じ破棄経路があったため、進捗中の復号失敗で `php_session_abort()` を使う修正を追加した。さらに旧版の `php_serialize` 復号器は失敗時にも常に成功を返しており、予約名プロパティを失って進捗を書き戻した。公式8.2系の戻り値条件に合わせて失敗を返すよう変更した。固定ソースへの厳密適用と Linux/amd64・Apache/mod_php クリーンビルドの後、同じバイナリで `php`、`php_binary`、`php_serialize` の通常 multipart と、予約名プロパティを含む保存済みセッションの保持を確認した。
+
+別の良性セッション復号OOM検査では、8 MiB 制限下で要求スクリプトが実行されず、同一 Apache worker が次の要求を処理し、保存済みセッションファイルの SHA-256 が前後で一致した。これは実際に発生した一つの失敗地点と files 保存ハンドラの結果であり、全保存ハンドラ・全OOM地点を示さない。
 
 Zend側の当初未移植だった差分6ファイルを確認した。`zend_API.c` の `object_finit` は JSON 用に追加済み。`zend_smart_str.c` / `.h` は Cookie の経路を部分移植した。`zend_operators.c` の公式追加は復号時の小文字化を失敗可能にする呼出しに使われる。7.3.33では `var_unserializer` 内で失敗可能な小文字名を作って既存のクラス検索APIへ渡す形にした。公式の `zend_string.c` と `zend_compile.c` の追加は新規の `interned_strings_fallible` フラグを支えるもので、7.3.33候補はそのフラグを導入せず復号側の文字列を失敗可能に確保している。これらの行を機械的に移植する必要はないが、OPcache上書きやinterned表の割当失敗を含む同等性は未判定。smart_str の残る経路は7.3.33に公式と同名のAPIがないため、呼び出し側の所有権処理と合わせて未判定のまま調べる。
 

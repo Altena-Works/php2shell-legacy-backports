@@ -22,9 +22,29 @@ if (!session_start()) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_GET['reserved'])) {
+        $object = new stdClass();
+        $object->__PHP_Incomplete_Class_Name = 'name';
+        $object->__PHP_Incomplete_Class_Serialized = 'serialized';
+        $object->__PHP_Incomplete_Enum_Case = 'enum';
+        $_SESSION['reserved'] = $object;
+        echo "RESERVED_SEEDED\n";
+        return;
+    }
     $_SESSION['fixture'] = new BackportSessionFixture();
     echo "SEEDED\n";
 } else {
+    if (isset($_GET['reserved'])) {
+        $object = isset($_SESSION['reserved']) ? $_SESSION['reserved'] : null;
+        echo $object instanceof stdClass
+            && $object->__PHP_Incomplete_Class_Name === 'name'
+            && $object->__PHP_Incomplete_Class_Serialized === 'serialized'
+            && $object->__PHP_Incomplete_Enum_Case === 'enum'
+            ? "RESERVED_PRESERVED\n" : "RESERVED_LOST\n";
+        echo isset($_SESSION['upload_progress_check'])
+            ? "PROGRESS_PRESENT\n" : "PROGRESS_ABSENT\n";
+        return;
+    }
     echo isset($_SESSION['fixture'])
         && $_SESSION['fixture'] instanceof BackportSessionFixture
         && $_SESSION['fixture']->value() === 'ordinary'
