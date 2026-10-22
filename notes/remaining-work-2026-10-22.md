@@ -18,9 +18,9 @@
 
 ## 7.3.33 の未変更・未判定ファイル
 
-公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが28件ある。これは機械的な調査リストであり、28件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
+公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが26件ある。これは機械的な調査リストであり、26件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
 
 - Zend: `zend_compile.c`、`zend_operators.c`、`zend_string.c`。復号側の代替実装を含め、同等性を判定する。
-- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`dom/xpath.c`、`exif/exif.c`、`fileinfo/libmagic/cdf.c`、`gd/libgd/wbmp.c`、`iconv/iconv.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`json/json_scanner.c`、`libxml/libxml.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`simplexml/simplexml.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`、`tokenizer/tokenizer.c`、`xml/xml.c`、`xmlwriter/php_xmlwriter.c`。`zlib/zlib_filter.c` は変更済みだが個々の失敗地点は未判定。
+- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`dom/xpath.c`、`exif/exif.c`、`fileinfo/libmagic/cdf.c`、`gd/libgd/wbmp.c`、`iconv/iconv.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`json/json_scanner.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`、`tokenizer/tokenizer.c`、`xml/xml.c`、`xmlwriter/php_xmlwriter.c`。`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c` は変更済みだが個々の失敗地点は未判定。
 
 候補パッチに含まれるファイルも行単位の等価性は未証明。特にセッションの異常終了境界、JSON/PCRE内部割当、SPLの複製・復元、cURLの他モード、zlibの各割当地点を別に扱う。

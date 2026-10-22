@@ -59,5 +59,6 @@ if [[ $version == 7.3.33 ]]; then
     "$script_dir/candidates/check-session-formats.sh" "$source_tree"
     "$script_dir/candidates/check-json-oom.sh" "$source_tree"
     "$script_dir/candidates/check-repeat-oom.sh" "$source_tree"
+    "$script_dir/candidates/check-simplexml.sh" "$source_tree"
     "$script_dir/candidates/check-upload-decode-oom.sh" "$source_tree"
 fi

@@ -28,6 +28,8 @@
 
 `ext/zlib/zlib.c` は公式の失敗可能な圧縮初期確保、展開バッファ拡張、`gzfile` の保留OOM確認に対応した。7.3.33 の追加の初期確保・`deflate_add` 拡張も失敗可能にし、失敗時に保有バッファを解放して中断する。cURL と zlib 有効の Linux/amd64・Apache/mod_php クリーンビルド、通常の gzip 読み書き、逐次展開と一括展開中の良性OOM後の同一ワーカー継続を確認した。zlib の個別失敗地点と圧縮中のOOMは未判定。
 
+`ext/simplexml/simplexml.c` では、公式差分の文字列確保、プロパティ走査中の OOM 中断、移動した iterator データの復元、XPath の配列確保失敗処理を7.3.33に対応させた。公式版の `SimpleXMLElement::key()` に相当する旧版の iterator コールバックも失敗可能な確保へ変更した。旧版では文字列化コールバックから失敗を返すだけだと OOM 後にユーザーコードが次の文まで進む実測があり、一時 libxml データの解放後に保留 OOM を処理する境界を追加した。`ext/libxml/libxml.c` のエラー処理中断とエラー配列のサイズ指定も公式差分に対応した。libxml・SimpleXML 有効の固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、通常の XML 文字列化・属性・XPath・iterator キー・内部エラー列挙と、12 MiB の良性テキストに対する8 MiB制限下の soft OOM 後の同一 worker 継続を確認した。個別の属性・XPath・iterator の割当失敗地点、拡張全体の同等性は未判定。
+
 追加候補では `zlib_filter.c` の2か所の保留OOM中断と、`main/streams/streams.c` のフィルター入力・読取バッファ・結果文字列の失敗可能な確保を移した。最初の候補は `stream_get_contents()` による良性の大容量展開で Apache worker が hard OOM により終了した。読取バッファと結果文字列の再確保を変更後、指定経路で soft OOM と同一 worker 継続を確認した。さらにフィルター入力バッファと区切り文字付き読取の返却文字列を公式差分に合わせ、後述のセッション復号修正も含めて固定ソースへの厳密適用、Linux/amd64・Apache/mod_php クリーンビルド、版別チェックを通過した。同じバイナリで通常フィルター動作と良性OOM後の同一 worker 継続を確認。個別の割当失敗地点と zlib 圧縮中のOOMは未判定。
 
 ### 8.5.12 の二重解放報告

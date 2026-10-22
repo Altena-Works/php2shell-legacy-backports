@@ -5867,3 +5867,307 @@
  			status = inflate(&(data->strm), Z_FINISH);
  			if (data->strm.avail_out < data->outbuf_len) {
  				size_t bucketlen = data->outbuf_len - data->strm.avail_out;
+--- a/ext/simplexml/simplexml.c
++++ b/ext/simplexml/simplexml.c
+@@ -941,13 +941,24 @@
+ }
+ /* }}} */
+ 
++static zend_always_inline zend_string *sxe_fstring_init(const char *value, size_t len)
++{
++	zend_string *result = zend_string_safe_falloc(1, len, 0, 0);
++	if (UNEXPECTED(!result)) {
++		return NULL;
++	}
++	memcpy(ZSTR_VAL(result), value, len);
++	ZSTR_VAL(result)[len] = '\0';
++	return result;
++}
++
+ static inline zend_string *sxe_xmlNodeListGetString(xmlDocPtr doc, xmlNodePtr list, int inLine) /* {{{ */
+ {
+ 	xmlChar *tmp = xmlNodeListGetString(doc, list, inLine);
+ 	zend_string *res;
+ 
+ 	if (tmp) {
+-		res = zend_string_init((char*)tmp, strlen((char *)tmp), 0);
++		res = sxe_fstring_init((char*)tmp, strlen((char *)tmp));
+ 		xmlFree(tmp);
+ 	} else {
+ 		res = ZSTR_EMPTY_ALLOC();
+@@ -959,17 +970,16 @@
+ 
+ /* {{{ _get_base_node_value()
+  */
+-static void _get_base_node_value(php_sxe_object *sxe_ref, xmlNodePtr node, zval *value, xmlChar *nsprefix, int isprefix)
++static zend_bool _get_base_node_value(php_sxe_object *sxe_ref, xmlNodePtr node, zval *value, xmlChar *nsprefix, int isprefix)
+ {
+ 	php_sxe_object *subnode;
+-	xmlChar        *contents;
+ 
+ 	if (node->children && node->children->type == XML_TEXT_NODE && !xmlIsBlankNode(node->children)) {
+-		contents = xmlNodeListGetString(node->doc, node->children, 1);
+-		if (contents) {
+-			ZVAL_STRING(value, (char *)contents);
+-			xmlFree(contents);
++		zend_string *str = sxe_xmlNodeListGetString(node->doc, node->children, 1);
++		if (UNEXPECTED(!str)) {
++			return 0;
+ 		}
++		ZVAL_STR(value, str);
+ 	} else {
+ 		subnode = php_sxe_object_new(sxe_ref->zo.ce, sxe_ref->fptr_count);
+ 		subnode->document = sxe_ref->document;
+@@ -983,6 +993,7 @@
+ 		ZVAL_OBJ(value, &subnode->zo);
+ 		/*zval_add_ref(value);*/
+ 	}
++	return 1;
+ }
+ /* }}} */
+ 
+@@ -1111,11 +1122,8 @@
+ 	xmlAttrPtr       attr;
+ 	int              namelen;
+ 	int              test;
+-	char 		 	 use_iter;
+-	zval             iter_data;
++	zval             iter_data_zv, *iter_data = NULL;
+ 
+-	use_iter = 0;
+-
+ 	sxe = Z_SXEOBJ_P(object);
+ 
+ 	if (is_debug) {
+@@ -1142,13 +1150,20 @@
+ 			test = sxe->iter.name && sxe->iter.type == SXE_ITER_ATTRLIST;
+ 			while (attr) {
+ 				if ((!test || !xmlStrcmp(attr->name, sxe->iter.name)) && match_ns(sxe, (xmlNodePtr)attr, sxe->iter.nsprefix, sxe->iter.isprefix)) {
+-					ZVAL_STR(&value, sxe_xmlNodeListGetString((xmlDocPtr) sxe->document->ptr, attr->children, 1));
++					zend_string *str = sxe_xmlNodeListGetString((xmlDocPtr) sxe->document->ptr, attr->children, 1);
++					if (UNEXPECTED(!str)) {
++						goto oom;
++					}
++					ZVAL_STR(&value, str);
+ 					namelen = xmlStrlen(attr->name);
+ 					if (Z_ISUNDEF(zattr)) {
+ 						array_init(&zattr);
+ 						sxe_properties_add(rv, "@attributes", sizeof("@attributes") - 1, &zattr);
+ 					}
+ 					add_assoc_zval_ex(&zattr, (char*)attr->name, namelen, &value);
++					if (ZEND_HAS_OOM()) {
++						goto oom;
++					}
+ 				}
+ 				attr = attr->next;
+ 			}
+@@ -1160,20 +1175,27 @@
+ 
+ 	if (node && sxe->iter.type != SXE_ITER_ATTRLIST) {
+ 		if (node->type == XML_ATTRIBUTE_NODE) {
+-			ZVAL_STR(&value, sxe_xmlNodeListGetString(node->doc, node->children, 1));
++			zend_string *str = sxe_xmlNodeListGetString(node->doc, node->children, 1);
++			if (UNEXPECTED(!str)) {
++				goto oom;
++			}
++			ZVAL_STR(&value, str);
+ 			zend_hash_next_index_insert(rv, &value);
++			if (ZEND_HAS_OOM()) {
++				goto oom;
++			}
+ 			node = NULL;
+ 		} else if (sxe->iter.type != SXE_ITER_CHILD) {
+ 
+ 			if ( sxe->iter.type == SXE_ITER_NONE || !node->children || !node->parent || !node->next || node->children->next || node->children->children || node->parent->children == node->parent->last ) {
+ 				node = node->children;
+ 			} else {
+-				ZVAL_COPY_VALUE(&iter_data, &sxe->iter.data);
++				iter_data = &iter_data_zv;
++				ZVAL_COPY_VALUE(iter_data, &sxe->iter.data);
+ 				ZVAL_UNDEF(&sxe->iter.data);
+ 
+ 				node = php_sxe_reset_iterator(sxe, 0);
+ 
+-				use_iter = 1;
+ 			}
+ 		}
+ 
+@@ -1185,8 +1207,15 @@
+ 					const xmlChar *cur = node->content;
+ 
+ 					if (*cur != 0) {
+-						ZVAL_STR(&value, sxe_xmlNodeListGetString(node->doc, node, 1));
++						zend_string *str = sxe_xmlNodeListGetString(node->doc, node, 1);
++						if (UNEXPECTED(!str)) {
++							goto oom;
++						}
++						ZVAL_STR(&value, str);
+ 						zend_hash_next_index_insert(rv, &value);
++						if (ZEND_HAS_OOM()) {
++							goto oom;
++						}
+ 					}
+ 					goto next_iter;
+ 				}
+@@ -1203,15 +1232,20 @@
+ 				namelen = xmlStrlen(node->name);
+ 			}
+ 
+-			_get_base_node_value(sxe, node, &value, sxe->iter.nsprefix, sxe->iter.isprefix);
++			if (UNEXPECTED(!_get_base_node_value(sxe, node, &value, sxe->iter.nsprefix, sxe->iter.isprefix))) {
++				goto oom;
++			}
+ 
+-			if ( use_iter ) {
++			if (iter_data) {
+ 				zend_hash_next_index_insert(rv, &value);
+ 			} else {
+ 				sxe_properties_add(rv, name, namelen, &value);
+ 			}
++			if (ZEND_HAS_OOM()) {
++				goto oom;
++			}
+ next_iter:
+-			if (use_iter) {
++			if (iter_data) {
+ 				node = php_sxe_iterator_fetch(sxe, node->next, 0);
+ 			} else {
+ 				node = node->next;
+@@ -1219,14 +1253,24 @@
+ 		}
+ 	}
+ 
+-	if (use_iter) {
++	if (iter_data) {
+ 		if (!Z_ISUNDEF(sxe->iter.data)) {
+ 			zval_ptr_dtor(&sxe->iter.data);
+ 		}
+-		ZVAL_COPY_VALUE(&sxe->iter.data, &iter_data);
++		ZVAL_COPY_VALUE(&sxe->iter.data, iter_data);
+ 	}
+ 
+ 	return rv;
++
++oom:
++	zend_hash_clean(rv);
++	if (iter_data) {
++		if (!Z_ISUNDEF(sxe->iter.data)) {
++			zval_ptr_dtor(&sxe->iter.data);
++		}
++		ZVAL_COPY_VALUE(&sxe->iter.data, iter_data);
++	}
++	return rv;
+ }
+ /* }}} */
+ 
+@@ -1337,7 +1381,10 @@
+ 	result = retval->nodesetval;
+ 
+ 	if (result != NULL) {
+-		array_init(return_value);
++		array_init_size(return_value, result->nodeNr);
++		if (UNEXPECTED(!zend_hash_real_finit(Z_ARRVAL_P(return_value), 1))) {
++			goto oom;
++		}
+ 
+ 		for (i = 0; i < result->nodeNr; ++i) {
+ 			nodeptr = result->nodeTab[i];
+@@ -1356,6 +1403,9 @@
+ 				}
+ 
+ 				add_next_index_zval(return_value, &value);
++				if (ZEND_HAS_OOM()) {
++					goto oom;
++				}
+ 			}
+ 		}
+ 	} else {
+@@ -1363,6 +1413,13 @@
+ 	}
+ 
+ 	xmlXPathFreeObject(retval);
++	return;
++
++oom:
++	xmlXPathFreeObject(retval);
++	zval_ptr_dtor(return_value);
++	ZVAL_NULL(return_value);
++	RETURN_OOM();
+ }
+ /* }}} */
+ 
+@@ -1648,7 +1705,11 @@
+ 	node = php_sxe_get_first_node(sxe, node);
+ 	if (node) {
+ 		namelen = xmlStrlen(node->name);
+-		RETURN_STRINGL((char*)node->name, namelen);
++		zend_string *str = sxe_fstring_init((const char *)node->name, namelen);
++		if (UNEXPECTED(!str)) {
++			RETURN_OOM();
++		}
++		RETURN_STR(str);
+ 	} else {
+ 		RETURN_EMPTY_STRING();
+ 	}
+@@ -1826,7 +1887,11 @@
+ static int cast_object(zval *object, int type, char *contents)
+ {
+ 	if (contents) {
+-		ZVAL_STRINGL(object, contents, strlen(contents));
++		zend_string *str = sxe_fstring_init(contents, strlen(contents));
++		if (UNEXPECTED(!str)) {
++			return FAILURE;
++		}
++		ZVAL_STR(object, str);
+ 	} else {
+ 		ZVAL_NULL(object);
+ 	}
+@@ -1898,6 +1963,9 @@
+ 
+ 	if (contents) {
+ 		xmlFree(contents);
++	}
++	if (UNEXPECTED(rv == FAILURE && ZEND_HAS_OOM())) {
++		zend_handle_delayed_oom();
+ 	}
+ 
+ 	return rv;
+@@ -2443,7 +2511,12 @@
+ 	}
+ 
+ 	if (curnode) {
+-		ZVAL_STRINGL(key, (char *) curnode->name, xmlStrlen(curnode->name));
++		zend_string *str = sxe_fstring_init((const char *)curnode->name, xmlStrlen(curnode->name));
++		if (UNEXPECTED(!str)) {
++			ZVAL_NULL(key);
++			return;
++		}
++		ZVAL_STR(key, str);
+ 	} else {
+ 		ZVAL_NULL(key);
+ 	}
+--- a/ext/libxml/libxml.c
++++ b/ext/libxml/libxml.c
+@@ -546,6 +546,9 @@
+ 	char *buf;
+ 	int len, len_iter, output = 0;
+ 
++	if (ZEND_HAS_OOM()) {
++		return;
++	}
+ 
+ 	len = vspprintf(&buf, 0, *msg, ap);
+ 	len_iter = len;
+@@ -1052,10 +1055,10 @@
+ 
+ 	if (LIBXML(error_list)) {
+ 
+-		array_init(return_value);
++		array_init_size(return_value, zend_llist_count(LIBXML(error_list)));
+ 		error = zend_llist_get_first(LIBXML(error_list));
+ 
+-		while (error != NULL) {
++		while (error != NULL && !ZEND_HAS_OOM()) {
+ 			zval z_error;
+ 
+ 			object_init_ex(&z_error, libxmlerror_class_entry);
