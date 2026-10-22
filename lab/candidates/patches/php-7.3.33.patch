@@ -7140,3 +7140,254 @@
  	if (arg_c >= 3) {
  		if (!ImageInfo.Thumbnail.width || !ImageInfo.Thumbnail.height) {
  			if (!exif_scan_thumbnail(&ImageInfo)) {
+--- a/ext/soap/php_encoding.c
++++ b/ext/soap/php_encoding.c
+@@ -2642,6 +2642,11 @@
+ 					ar = zend_hash_index_update(Z_ARRVAL_P(ar), pos[i], &tmpAr);
+ 				}
+ 				i++;
++				if (ZEND_HAS_OOM()) {
++					zval_ptr_dtor(ret);
++					ZVAL_NULL(ret);
++					goto ret;
++				}
+ 			}
+ 			zend_hash_index_update(Z_ARRVAL_P(ar), pos[i], &tmpVal);
+ 
+@@ -2663,6 +2668,7 @@
+ 		}
+ 		trav = trav->next;
+ 	}
++ret:
+ 	efree(dims);
+ 	efree(pos);
+ 	return ret;
+--- a/ext/soap/php_http.c
++++ b/ext/soap/php_http.c
+@@ -921,7 +921,9 @@
+ 			php_stream_close(stream);
+ 			zend_hash_str_del(Z_OBJPROP_P(this_ptr), "httpsocket", sizeof("httpsocket")-1);
+ 			zend_hash_str_del(Z_OBJPROP_P(this_ptr), "_use_proxy", sizeof("_use_proxy")-1);
+-			add_soap_fault(this_ptr, "HTTP", "Error Fetching http headers", NULL, NULL);
++			if (!ZEND_HAS_OOM()) {
++				add_soap_fault(this_ptr, "HTTP", "Error Fetching http headers", NULL, NULL);
++			}
+ 			smart_str_free(&soap_headers_z);
+ 			return FALSE;
+ 		}
+@@ -1099,7 +1101,9 @@
+ 		zend_string_release_ex(http_headers, 0);
+ 		zend_hash_str_del(Z_OBJPROP_P(this_ptr), "httpsocket", sizeof("httpsocket")-1);
+ 		zend_hash_str_del(Z_OBJPROP_P(this_ptr), "_use_proxy", sizeof("_use_proxy")-1);
+-		add_soap_fault(this_ptr, "HTTP", "Error Fetching http body, No Content-Length, connection closed or chunked data", NULL, NULL);
++		if (!ZEND_HAS_OOM()) {
++			add_soap_fault(this_ptr, "HTTP", "Error Fetching http body, No Content-Length, connection closed or chunked data", NULL, NULL);
++		}
+ 		if (http_msg) {
+ 			efree(http_msg);
+ 		}
+@@ -1468,7 +1472,7 @@
+ 				if (buf_size > 0) {
+ 					int len_size = 0;
+ 
+-					if (http_buf_size + buf_size + 1 < 0) {
++					if (http_buf_size > INT_MAX - buf_size - 1) {
+ 						if (http_buf) {
+ 							zend_string_release_ex(http_buf, 0);
+ 						}
+@@ -1476,9 +1480,17 @@
+ 					}
+ 
+ 					if (http_buf) {
+-						http_buf = zend_string_realloc(http_buf, http_buf_size + buf_size, 0);
++						zend_string *new_http_buf = zend_string_safe_frealloc(http_buf, 1, http_buf_size, buf_size, 0);
++						if (!new_http_buf) {
++							zend_string_release_ex(http_buf, 0);
++							return NULL;
++						}
++						http_buf = new_http_buf;
+ 					} else {
+-						http_buf = zend_string_alloc(buf_size, 0);
++						http_buf = zend_string_safe_falloc(1, buf_size, 0, 0);
++						if (!http_buf) {
++							return NULL;
++						}
+ 					}
+ 
+ 					while (len_size < buf_size) {
+@@ -1538,7 +1550,10 @@
+ 		if (header_length < 0 || header_length >= INT_MAX) {
+ 			return NULL;
+ 		}
+-		http_buf = zend_string_alloc(header_length, 0);
++		http_buf = zend_string_safe_falloc(1, header_length, 0, 0);
++		if (!http_buf) {
++			return NULL;
++		}
+ 		while (http_buf_size < header_length) {
+ 			int len_read = php_stream_read(stream, http_buf->val + http_buf_size, header_length - http_buf_size);
+ 			if (len_read <= 0) {
+@@ -1550,9 +1565,21 @@
+ 		do {
+ 			int len_read;
+ 			if (http_buf) {
+-				http_buf = zend_string_realloc(http_buf, http_buf_size + 4096, 0);
++				if (http_buf_size >= INT_MAX - 4096) {
++					zend_string_release_ex(http_buf, 0);
++					return NULL;
++				}
++				zend_string *new_http_buf = zend_string_safe_frealloc(http_buf, 1, http_buf_size, 4096, 0);
++				if (!new_http_buf) {
++					zend_string_release_ex(http_buf, 0);
++					return NULL;
++				}
++				http_buf = new_http_buf;
+ 			} else {
+-				http_buf = zend_string_alloc(4096, 0);
++				http_buf = zend_string_safe_falloc(1, 4096, 0, 0);
++				if (!http_buf) {
++					return NULL;
++				}
+ 			}
+ 			len_read = php_stream_read(stream, http_buf->val + http_buf_size, 4096);
+ 			if (len_read > 0) {
+@@ -1583,6 +1610,9 @@
+ 
+ 		/* add header to collection */
+ 		smart_str_appends(&tmp_response, headerbuf);
++		if (ZEND_HAS_OOM()) {
++			break;
++		}
+ 	}
+ 
+ 	smart_str_free(&tmp_response);
+--- a/ext/soap/soap.c
++++ b/ext/soap/soap.c
+@@ -1644,8 +1644,13 @@
+ 	old_features = SOAP_GLOBAL(features);
+ 	SOAP_GLOBAL(features) = service->features;
+ 	old_soap_version = SOAP_GLOBAL(soap_version);
++	ZVAL_NULL(&function_name);
++	params = NULL;
+ 	function = deserialize_function_call(service->sdl, doc_request, service->actor, &function_name, &num_params, &params, &soap_version, &soap_headers);
+ 	xmlFreeDoc(doc_request);
++	if (ZEND_HAS_OOM()) {
++		goto fail;
++	}
+ 
+ 	if (EG(exception)) {
+ 		php_output_discard();
+@@ -2077,7 +2082,9 @@
+ 
+ 	xmlFreeDoc(doc_return);
+ 	xmlFree(buf);
+-	zend_clear_exception();
++	if (!ZEND_HAS_OOM()) {
++		zend_clear_exception();
++	}
+ }
+ /* }}} */
+ 
+@@ -2106,6 +2113,10 @@
+ 	_old_http_status_line = SG(sapi_headers).http_status_line;
+ 
+ 	if (!PG(modules_activated) || !SOAP_GLOBAL(use_soap_error_handler) || !EG(objects_store).object_buckets) {
++		call_old_error_handler(error_num, error_filename, error_lineno, format, args);
++		return;
++	}
++	if (ZEND_HAS_OOM()) {
+ 		call_old_error_handler(error_num, error_filename, error_lineno, format, args);
+ 		return;
+ 	}
+@@ -3283,6 +3294,7 @@
+ static void deserialize_parameters(xmlNodePtr params, sdlFunctionPtr function, int *num_params, zval **parameters) /* {{{ */
+ {
+ 	int cur_param = 0,num_of_params = 0;
++	int i;
+ 	zval *tmp_parameters = NULL;
+ 
+ 	if (function != NULL) {
+@@ -3300,7 +3312,10 @@
+ 			}
+ 		} ZEND_HASH_FOREACH_END();
+ 		if (use_names) {
+-			tmp_parameters = safe_emalloc(num_of_params, sizeof(zval), 0);
++			tmp_parameters = _safe_femalloc(num_of_params, sizeof(zval), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++			if (!tmp_parameters) {
++				goto oom;
++			}
+ 			ZEND_HASH_FOREACH_PTR(function->requestParameters, param) {
+ 				val = get_node(params, param->paramName);
+ 				if (!val) {
+@@ -3310,6 +3325,9 @@
+ 					master_to_zval(&tmp_parameters[cur_param], param->encode, val);
+ 				}
+ 				cur_param++;
++				if (ZEND_HAS_OOM()) {
++					goto oom;
++				}
+ 			} ZEND_HASH_FOREACH_END();
+ 			*parameters = tmp_parameters;
+ 			*num_params = num_of_params;
+@@ -3338,7 +3356,10 @@
+ 		    strcmp((char *)params->name, function->functionName) == 0) {
+ 			num_of_params = 0;
+ 		} else if (num_of_params > 0) {
+-			tmp_parameters = safe_emalloc(num_of_params, sizeof(zval), 0);
++			tmp_parameters = _safe_femalloc(num_of_params, sizeof(zval), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++			if (!tmp_parameters) {
++				goto oom;
++			}
+ 
+ 			trav = params;
+ 			while (trav != 0 && cur_param < num_of_params) {
+@@ -3356,6 +3377,9 @@
+ 					}
+ 					master_to_zval(&tmp_parameters[cur_param], enc, trav);
+ 					cur_param++;
++					if (ZEND_HAS_OOM()) {
++						goto oom;
++					}
+ 				}
+ 				trav = trav->next;
+ 			}
+@@ -3366,6 +3390,17 @@
+ 	}
+ 	(*parameters) = tmp_parameters;
+ 	(*num_params) = num_of_params;
++	return;
++
++oom:
++	for (i = 0; i < cur_param; i++) {
++		zval_ptr_dtor(&tmp_parameters[i]);
++	}
++	if (tmp_parameters) {
++		efree(tmp_parameters);
++	}
++	*parameters = NULL;
++	*num_params = 0;
+ }
+ /* }}} */
+ 
+@@ -3639,6 +3674,10 @@
+ 				}
+ 				last = h;
+ 			}
++			if (ZEND_HAS_OOM()) {
++				encode_finish();
++				return NULL;
++			}
+ ignore_header:
+ 			trav = trav->next;
+ 		}
+@@ -3653,6 +3692,10 @@
+ 		func = func->children;
+ 	}
+ 	deserialize_parameters(func, function, num_params, parameters);
++	if (ZEND_HAS_OOM()) {
++		encode_finish();
++		return NULL;
++	}
+ 
+ 	encode_finish();
+ 
