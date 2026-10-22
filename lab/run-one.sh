@@ -9,6 +9,8 @@ results_root=${PHP_RESULTS_DIR:?results directory required}
 patch_dir=${PHP_PATCH_DIR:-}
 check_dir=${PHP_CHECK_DIR:-}
 timeout_seconds=${PHP_TIMEOUT_SECONDS:-3600}
+xml_backend=${PHP_XML_BACKEND:-libxml}
+[[ $xml_backend == libxml || $xml_backend == expat ]] || { echo "invalid XML backend: $xml_backend" >&2; exit 2; }
 script_dir=$(cd "$(dirname "$0")" && pwd)
 result_dir=$results_root/$mode/$version
 mkdir -p "$result_dir"
@@ -97,11 +99,17 @@ fi
 container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$source_tree:$mount_path" -v "$script_dir/health.php:/var/www/html/health.php:ro" \
     -e PHP_SRC_PATH="$mount_path" -e PHP_MATRIX_VERSION="$version" \
+    -e PHP_XML_BACKEND="$xml_backend" \
     -w "$mount_path" "$image" bash -lc '
         set -e
         if [ ! -f Makefile ]; then
             case "$PHP_MATRIX_VERSION" in
-                7.3.33) set -- --enable-json --enable-filter --enable-shmop --enable-libxml --enable-simplexml --enable-dom --enable-xmlwriter --enable-xml --with-curl --with-zlib --with-iconv ;;
+                7.3.33)
+                    set -- --enable-json --enable-filter --enable-shmop --enable-libxml --enable-simplexml --enable-dom --enable-xmlwriter --enable-xml --with-curl --with-zlib --with-iconv
+                    if [ "$PHP_XML_BACKEND" = expat ]; then
+                        set -- "$@" --with-libdir=lib/x86_64-linux-gnu --with-libexpat-dir=/usr
+                    fi
+                    ;;
                 7.*) set -- --enable-json --enable-filter --enable-shmop ;;
                 *) set -- ;;
             esac

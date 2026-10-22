@@ -28,6 +28,11 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 [[ $pre == *$'\n'7.3.33$'\n'apache2handler ]] || exit 1
+if [[ ${PHP_XML_BACKEND:-libxml} == expat ]]; then
+    backend=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        'http://127.0.0.1/normal-xml-sax-limit.php?backend=1')
+    [[ $backend == expat ]] || { printf 'expected Expat, got %s\n' "$backend" >&2; exit 1; }
+fi
 normal=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-xml-sax-limit.php)
 [[ $normal == XML_SAX_OK ]] || {

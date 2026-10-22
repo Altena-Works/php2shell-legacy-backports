@@ -2,6 +2,9 @@
 if (!extension_loaded('xml')) {
     exit('XML_EXTENSION_MISSING');
 }
+if (isset($_GET['backend'])) {
+    exit(XML_SAX_IMPL);
+}
 
 if (!isset($_GET['limit'])) {
     $events = array();

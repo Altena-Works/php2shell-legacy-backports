@@ -6627,3 +6627,48 @@
  
  	XML_SetElementHandler(parser->parser, _xml_startElementHandler, _xml_endElementHandler);
  	XML_SetCharacterDataHandler(parser->parser, _xml_characterDataHandler);
+--- a/ext/xml/xml.c
++++ b/ext/xml/xml.c
+@@ -293,12 +293,12 @@
+ 
+ static void *php_xml_malloc_wrapper(size_t sz)
+ {
+-	return emalloc(sz);
++	return _femalloc(sz ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
+ }
+ 
+ static void *php_xml_realloc_wrapper(void *ptr, size_t sz)
+ {
+-	return erealloc(ptr, sz);
++	return _safe_ferealloc(ptr, 1, sz, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
+ }
+ 
+ static void php_xml_free_wrapper(void *ptr)
+@@ -1177,6 +1177,11 @@
+ 	parser = ecalloc(1, sizeof(xml_parser));
+ 	parser->parser = XML_ParserCreate_MM((auto_detect ? NULL : encoding),
+                                          &php_xml_mem_hdlrs, (XML_Char*)ns_param);
++	if (!parser->parser) {
++		efree(parser);
++		zend_handle_delayed_oom();
++		RETURN_FALSE;
++	}
+ 
+ 	parser->target_encoding = encoding;
+ 	parser->case_folding = 1;
+@@ -1446,6 +1451,7 @@
+ 	parser->isparsing = 1;
+ 	ret = XML_Parse(parser->parser, (XML_Char*)data, data_len, isFinal);
+ 	parser->isparsing = 0;
++	zend_handle_delayed_oom();
+ 	RETVAL_LONG(ret);
+ }
+ 
+@@ -1495,6 +1501,7 @@
+ 	parser->isparsing = 1;
+ 	ret = XML_Parse(parser->parser, (XML_Char*)data, data_len, 1);
+ 	parser->isparsing = 0;
++	zend_handle_delayed_oom();
+ 
+ 	RETVAL_LONG(ret);
+ }

@@ -9,10 +9,10 @@
 | 1 | 7.3.33 の全対象経路を公式修正と照合し、配布用パッチへ昇格する | 行・状態寿命単位の照合、クリーンビルドと機能維持、未判定の対象経路がないことを示す監査記録 |
 | 2 | 5.6.40 の soft OOM で Apache ワーカーが終了する問題を解決し、7.3.33 と同等の防御を旧 API に移す | 固定ソースへの適用、Linux x86_64・Apache/mod_php の正常機能と良性 OOM 後の同一ワーカー継続 |
 | 3 | PHP 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 の各系列最終版を判定・移植する | 版別パッチ、構成とソースの固定、正常機能・防御条件の版別実測。対象外なら根拠 |
-| 別件 | 8.5.12 の二重解放報告の原因と旧版への該当性を確認し、該当すれば修正する | 公開された一次資料・公式応答で原因と影響を特定し、該当版で防御的に修正・検証。現時点で原因と再現条件は非公開 |
+| 別件 | 8.5.12 の二重解放報告の原因と旧版への該当性を確認し、該当すれば修正する | 公式Issue #24488のSimpleXML/GC回帰は確認済み。7.3.33と5.6.40への直接該当性は[版別判定](double-free-24488-triage.md)を参照。SNS画像との同一性と旧版固有の別経路は未確定 |
 | 別件 | multipart フォーム由来SIDによる `session.use_only_cookies` の設定境界を版別に照合する。上流PR #22113は2026-10-22時点で未マージ | Cookie構成の良性HTTPでフォーム由来SID不採用と通常セッション維持を確認。両CVEの修正と区別する |
 | 別件 | 公式公開前メモのセッションファイル保存・cleanupとアプリLFI、serializer設定不一致、破棄時再入の仮説を分類する | 公式差分と対象版のソース、追加前提の有無、アプリ側の責任範囲を記録。矛盾する未実証説を完了根拠にしない |
-| 別件 | 公式修正後の非失敗可能割当報告（PHP issue #24492、Expat用PR #24516）を構成別に判定する | 該当割当の静的照合と、良性OOM後の同一ワーカー継続。Expat未ビルドなら未検証と明記 |
+| 別件 | 公式修正後の非失敗可能割当報告（PHP issue #24492、Expat用PR #24516）を構成別に判定する | 7.3.33のExpat候補は固定ソースへの厳密適用、クリーンビルド、実装識別、通常XMLと良性OOM後の同一ワーカー継続を確認。ほかの割当と旧版系列は未判定 |
 | 最後 | 版別成果物と導入説明を整え、指定リポジトリへ送信する | 配布用パッチとチェックの整合、送信経路の証明書拒否・認証条件、リモートコミットの確認 |
 
 現行候補の `pass` は実施した範囲に限る。全経路遮断を証明するまで「公式修正と同等」「正式版」と表示しない。上記の判定・実装・検証・送信を終えた時点で一度区切る。
@@ -23,9 +23,9 @@
 
 ## 7.3.33 の未変更・未判定ファイル
 
-公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが23件ある。これは機械的な調査リストであり、23件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
+公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが22件ある。これは機械的な調査リストであり、22件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
 
 - Zend: `zend_compile.c`、`zend_operators.c`、`zend_string.c`。復号側の代替実装を含め、同等性を判定する。
-- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`exif/exif.c`、`fileinfo/libmagic/cdf.c`、`gd/libgd/wbmp.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`json/json_scanner.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`、`tokenizer/tokenizer.c`、`xml/xml.c`。`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c` は変更済みだが個々の失敗地点は未判定。
+- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`exif/exif.c`、`fileinfo/libmagic/cdf.c`、`gd/libgd/wbmp.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`json/json_scanner.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`、`tokenizer/tokenizer.c`。`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c`、`xml/xml.c` は変更済みだが個々の失敗地点は未判定。
 
 候補パッチに含まれるファイルも行単位の等価性は未証明。特にセッションの異常終了境界、JSON/PCRE内部割当、SPLの複製・復元、cURLの他モード、zlibの各割当地点を別に扱う。
