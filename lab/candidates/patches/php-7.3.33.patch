@@ -6171,3 +6171,169 @@
  			zval z_error;
  
  			object_init_ex(&z_error, libxmlerror_class_entry);
+--- a/ext/iconv/iconv.c
++++ b/ext/iconv/iconv.c
+@@ -444,6 +444,30 @@
+ 	}
+ 
+ 	return SUCCESS;
++}
++
++static zend_always_inline zend_bool php_iconv_falloc(smart_str *str, size_t len)
++{
++    size_t used = str->s ? ZSTR_LEN(str->s) : 0;
++    if (UNEXPECTED(len > SIZE_MAX - used)) {
++        return 0;
++    }
++    if (!str->s || len + used >= str->a) {
++        return smart_str_ferealloc(str, len + used);
++    }
++    return 1;
++}
++
++static zend_always_inline zend_string *php_iconv_fextend(zend_string *str, size_t len)
++{
++    zend_string *grown = (zend_string *) _safe_ferealloc(str, 1, len,
++        _ZSTR_HEADER_SIZE + 1 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++    if (UNEXPECTED(grown == NULL)) {
++        return NULL;
++    }
++    ZSTR_LEN(grown) = len;
++    zend_string_forget_hash_val(grown);
++    return grown;
+ }
+ 
+ /* {{{ _php_iconv_appendl() */
+@@ -461,7 +485,9 @@
+ 	if (in_p != NULL) {
+ 		while (in_left > 0) {
+ 			out_left = buf_growth;
+-			smart_str_alloc(d, out_left, 0);
++			if (UNEXPECTED(!php_iconv_falloc(d, out_left))) {
++				return PHP_ICONV_ERR_ALLOC;
++			}
+ 
+ 			out_p = ZSTR_VAL((d)->s) + ZSTR_LEN((d)->s);
+ 
+@@ -495,7 +521,9 @@
+ 	} else {
+ 		for (;;) {
+ 			out_left = buf_growth;
+-			smart_str_alloc(d, out_left, 0);
++			if (UNEXPECTED(!php_iconv_falloc(d, out_left))) {
++				return PHP_ICONV_ERR_ALLOC;
++			}
+ 
+ 			out_p = ZSTR_VAL((d)->s) + ZSTR_LEN((d)->s);
+ 
+@@ -577,7 +605,11 @@
+ 		return PHP_ICONV_ERR_UNKNOWN;
+ 	}
+ 
+-	out_buffer = zend_string_alloc(out_size, 0);
++	out_buffer = zend_string_safe_falloc(1, out_size, 0, 0);
++	if (UNEXPECTED(out_buffer == NULL)) {
++		iconv_close(cd);
++		return PHP_ICONV_ERR_ALLOC;
++	}
+ 	out_p = ZSTR_VAL(out_buffer);
+ 
+ 	result = iconv(cd, (const char **) &in_p, &in_size, (char **) &out_p, &out_left);
+@@ -589,7 +621,13 @@
+ 
+ 	if (out_left < 8) {
+ 		size_t pos = out_p - ZSTR_VAL(out_buffer);
+-		out_buffer = zend_string_extend(out_buffer, out_size + 8, 0);
++		zend_string *grown = php_iconv_fextend(out_buffer, out_size + 8);
++		if (UNEXPECTED(grown == NULL)) {
++			zend_string_efree(out_buffer);
++			iconv_close(cd);
++			return PHP_ICONV_ERR_ALLOC;
++		}
++		out_buffer = grown;
+ 		out_p = ZSTR_VAL(out_buffer) + pos;
+ 		out_size += 7;
+ 		out_left += 7;
+@@ -638,7 +676,11 @@
+ 	out_left = in_len + 32; /* Avoid realloc() most cases */
+ 	out_size = 0;
+ 	bsz = out_left;
+-	out_buf = zend_string_alloc(bsz, 0);
++	out_buf = zend_string_safe_falloc(1, bsz, 0, 0);
++	if (UNEXPECTED(out_buf == NULL)) {
++		iconv_close(cd);
++		return PHP_ICONV_ERR_ALLOC;
++	}
+ 	out_p = ZSTR_VAL(out_buf);
+ 
+ 	while (in_left > 0) {
+@@ -660,7 +702,13 @@
+ 				/* converted string is longer than out buffer */
+ 				bsz += in_len;
+ 
+-				out_buf = zend_string_extend(out_buf, bsz, 0);
++				zend_string *grown = php_iconv_fextend(out_buf, bsz);
++				if (UNEXPECTED(grown == NULL)) {
++					zend_string_efree(out_buf);
++					iconv_close(cd);
++					return PHP_ICONV_ERR_ALLOC;
++				}
++				out_buf = grown;
+ 				out_p = ZSTR_VAL(out_buf);
+ 				out_p += out_size;
+ 				out_left = bsz - out_size;
+@@ -682,7 +730,13 @@
+ 
+ 			if (errno == E2BIG) {
+ 				bsz += 16;
+-				out_buf = zend_string_extend(out_buf, bsz, 0);
++				zend_string *grown = php_iconv_fextend(out_buf, bsz);
++				if (UNEXPECTED(grown == NULL)) {
++					zend_string_efree(out_buf);
++					iconv_close(cd);
++					return PHP_ICONV_ERR_ALLOC;
++				}
++				out_buf = grown;
+ 				out_p = ZSTR_VAL(out_buf);
+ 				out_p += out_size;
+ 				out_left = bsz - out_size;
+@@ -1211,7 +1265,11 @@
+ 		goto out;
+ 	}
+ 
+-	buf = safe_emalloc(1, max_line_len, 5);
++	buf = _safe_femalloc(1, max_line_len, 5 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(buf == NULL)) {
++		err = PHP_ICONV_ERR_ALLOC;
++		goto out;
++	}
+ 
+ 	char_cnt = max_line_len;
+ 
+@@ -1451,7 +1509,7 @@
+ 
+ 			} break; /* case PHP_ICONV_ENC_SCHEME_QPRINT: */
+ 		}
+-	} while (in_left > 0);
++	} while (in_left > 0 && !ZEND_HAS_OOM());
+ 
+ 	smart_str_0(pretval);
+ 
+@@ -2408,7 +2466,7 @@
+ 
+ 	enc_str_tmp = ZSTR_VAL(encoded_str);
+ 	enc_str_len_tmp = ZSTR_LEN(encoded_str);
+-	while (enc_str_len_tmp > 0) {
++	while (enc_str_len_tmp > 0 && !ZEND_HAS_OOM()) {
+ 		smart_str decoded_header = {0};
+ 		char *header_name = NULL;
+ 		size_t header_name_len = 0;
+@@ -2831,7 +2889,7 @@
+ 
+ 		php_stream_bucket_unlink(bucket);
+ 
+-		if (php_iconv_stream_filter_append_bucket(self, stream, filter,
++		if (!ZEND_HAS_OOM() && php_iconv_stream_filter_append_bucket(self, stream, filter,
+ 				buckets_out, bucket->buf, bucket->buflen, &consumed,
+ 				php_stream_is_persistent(stream)) != SUCCESS) {
+ 			goto out_failure;

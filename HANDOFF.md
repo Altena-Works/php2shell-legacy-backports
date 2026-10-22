@@ -6,21 +6,21 @@
 
 このリポジトリは CVE-2026-109618（OOM 時の不完全な状態）と CVE-2026-109619（要求間に残る状態）について、公式修正を PHP 5〜7 の最終 `x.y.z` へ移植する作業を扱う。**両件の全経路遮断を確認した版はまだない。** PHP 8.0/8.1 などの公式配布物は同梱しない。旧版の正常機能を維持し、攻撃コード・PoC を作成または実行しない。
 
-PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件とは別の問題と追記した。原因箇所・再現条件は非公開で、旧版への該当性と現候補の遮断可否は未確認。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。従来の二重解放報告に対応する SimpleXML/GC の問題は、PHP 公式の[検証済み Issue #24488](https://github.com/php/php-src/issues/24488)で確認できた。[修正 PR #24494](https://github.com/php/php-src/pull/24494)は2026-10-22の確認時点で未マージ。これは CVE-2026-109618/109619 とは別件であり、旧版候補の遮断可否は未確認。記事内の ZIP・PoC は取得も実行もしていない。
 
 公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部などを移植・検証した。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。zlib と SimpleXML の指定経路で良性OOM後の同一 worker 継続、3保存形式の通常 multipart と予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 他の大型割当・再割当・拡張、upload progress 中の他の OOM 発生地点、両 CVE の全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、Linux/amd64 クリーンビルドと Apache/mod_php 版別正常系・良性OOM検査を通過。zlib・SimpleXML・iconv の指定経路で良性OOM後の同一 worker 継続、3保存形式の通常 multipart と予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 他の大型割当・再割当・拡張、upload progress 中の他の OOM 発生地点、両 CVE の全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `bfe34a66171d29d12842d6317c4b1e303d1d286fbbafc5e5f790a51ff73d07c5`。`/private/tmp/php-backport-73-simplexml-final-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、libxml・SimpleXML を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `2815b121d4e175e5f3af82fe049ff57e8e6f06797a125b01c27b2a52441dacca`。同じバイナリで通常 XML 文字列化・属性・XPath・iterator キー・内部エラー列挙、良性 SimpleXML OOM 後の要求中断・同一 worker 継続、zlib フィルターOOM、3保存形式の通常機能・予約名プロパティ保持、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-simplexml-final-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限る。
+7.3.33 の現候補 SHA-256 は `5a5f3f3fb17d607cafd8cf3242a905848a69487b0bc31ae9f226da1ea087af3c`。`/private/tmp/php-backport-73-iconv-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、iconv・libxml・SimpleXML を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `32119c788e3a692a97809955f83374c1b23e428047b317a3696acdcf0762e9b2`。同じバイナリで通常 iconv 変換・MIME・ストリームフィルター、良性 iconv OOM 後の要求中断・同一 worker 継続、通常 XML と良性 SimpleXML OOM、zlib フィルター OOM、3保存形式の通常機能・予約名プロパティ保持、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-iconv-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限る。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
@@ -33,6 +33,7 @@ PHP 8.5.12 の二重解放報告は、報告者が当日修正された2件と�
 1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。特に upload progress 中の他の復号 OOM 地点と要求間状態を判定し、公式修正に対応する未判定ファイルを一つずつ閉じる。SimpleXML は指定経路が通過したが、各割当失敗地点と iterator 所有権の全状態は未判定。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかに push する。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
+4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
 
 ユーザーの今回の明示許可により `staticwebos-build` VM を正常停止し、`php-backport-lab` で7.3.33 クリーンビルド・検査を実施した。検証後、`php-backport-lab` は正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
