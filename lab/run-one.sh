@@ -105,7 +105,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
         if [ ! -f Makefile ]; then
             case "$PHP_MATRIX_VERSION" in
                 7.3.33)
-                    set -- --enable-json --enable-filter --enable-shmop --enable-libxml --enable-simplexml --enable-dom --enable-xmlwriter --enable-xml --enable-tokenizer --enable-fileinfo --enable-exif --enable-soap --enable-mbstring --enable-intl --enable-opcache --with-bz2 --with-curl --with-zlib --with-iconv --with-gd --with-png-dir=/usr
+                    set -- --enable-json --enable-filter --enable-shmop --enable-libxml --enable-simplexml --enable-dom --enable-xmlwriter --enable-xml --enable-tokenizer --enable-fileinfo --enable-exif --enable-soap --enable-mbstring --enable-intl --enable-opcache --with-bz2 --with-curl --with-zlib --with-iconv --with-gd --with-png-dir=/usr --with-imap --with-imap-ssl --with-kerberos
                     if [ "$PHP_XML_BACKEND" = expat ]; then
                         set -- "$@" --with-libdir=lib/x86_64-linux-gnu --with-libexpat-dir=/usr
                     fi

@@ -13,14 +13,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。intl・OPcache・bzip2・GDを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過 | IMAP有効構成、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。intl・OPcache・bzip2・GD・IMAPを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過 | 個別の割当失敗地点、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `b7f35b668d465c6be2c38a4b27f0d8169a9c200c343ade27b7ea258052b3e2b9`。固定元ソースへのfuzzなし適用、intl・OPcache・bzip2・GD有効Linux/amd64クリーンビルド、Apache/mod_php版別検査 `pass` を確認した（`/private/tmp/php-backport-73-gd-clean/patch/7.3.33/`）。生成PHPモジュール SHA-256 は `d5f337ba13d593372b1b45195ab7b8a577bc19043374e4a38e251293221365d8`。通常セッション・multipart・mbstring・intl・OPcache、良性OOM後の同一Apacheワーカー継続を確認。`mb_strcut` はASCII・日本語ISO-2022-JPの正常系と良性OOM後の継続を確認。bzip2の通常圧縮・展開・ストリームフィルターと展開時の良性OOM後の同一ワーカー継続、GD/WBMPの通常読込と有効な大型画像の読込OOM後の同一ワーカー継続も確認した。bzip2・GD内の各失敗地点、filter内部各失敗地点、interned key固有の割当失敗、両CVEの全経路は未検証。IMAPは開発ヘッダ不足でビルド・実測なし。
+7.3.33 の現候補 SHA-256 は `b7f35b668d465c6be2c38a4b27f0d8169a9c200c343ade27b7ea258052b3e2b9`。固定元ソースへのfuzzなし適用、intl・OPcache・bzip2・GD・IMAP有効Linux/amd64クリーンビルド、Apache/mod_php版別検査 `pass` を確認した（`/private/tmp/php-backport-73-imap-lib-clean/patch/7.3.33/`）。生成PHPモジュール SHA-256 は `1ada1db73c1f74076dab39c12efb96166abb2823d12f23493102840359f17cfe`。通常セッション・multipart・mbstring・intl・OPcache、良性OOM後の同一Apacheワーカー継続を確認。`mb_strcut`、bzip2、GD/WBMP、IMAP MIMEヘッダーの正常系と指定した良性OOM後の同一ワーカー継続も確認した。各拡張内の別の割当失敗地点、filter内部各失敗地点、interned key固有の割当失敗、両CVEの全経路は未検証。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -34,7 +34,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 ## 次の作業
 
-1. 7.3.33 の残る5ファイルと、実装済みCDF・tokenizerの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。bzip2とGD/WBMPは有効構成の通常系と良性OOMを確認したが、各失敗地点は未判定。IMAPは拡張を組み込んだ実測が残る。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の残る5ファイルと、実装済みCDF・tokenizer、bzip2・GD・IMAPの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
