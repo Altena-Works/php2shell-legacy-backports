@@ -6394,3 +6394,236 @@
  			if (empty) {
  				xmlBufferEmpty(buffer);
  			}
+--- a/ext/xml/xml.c
++++ b/ext/xml/xml.c
+@@ -385,6 +385,20 @@
+ }
+ /* }}} */
+ 
++static void xml_parser_free_ltags(xml_parser *parser)
++{
++	if (parser->ltags) {
++		int inx;
++		for (inx = 0; inx < parser->level && inx < XML_MAXLEVEL; inx++) {
++			if (parser->ltags[inx]) {
++				efree(parser->ltags[inx]);
++			}
++		}
++		efree(parser->ltags);
++		parser->ltags = NULL;
++	}
++}
++
+ /* {{{ xml_parser_dtor() */
+ static void xml_parser_dtor(zend_resource *rsrc)
+ {
+@@ -393,12 +407,7 @@
+ 	if (parser->parser) {
+ 		XML_ParserFree(parser->parser);
+ 	}
+-	if (parser->ltags) {
+-		int inx;
+-		for (inx = 0; ((inx < parser->level) && (inx < XML_MAXLEVEL)); inx++)
+-			efree(parser->ltags[ inx ]);
+-		efree(parser->ltags);
+-	}
++	xml_parser_free_ltags(parser);
+ 	if (!Z_ISUNDEF(parser->startElementHandler)) {
+ 		zval_ptr_dtor(&parser->startElementHandler);
+ 	}
+@@ -470,7 +479,7 @@
+ 	int i;
+ 
+ 	ZVAL_UNDEF(retval);
+-	if (parser && handler && !EG(exception)) {
++	if (parser && handler && !EG(exception) && !ZEND_HAS_OOM()) {
+ 		int result;
+ 		zend_fcall_info fci;
+ 
+@@ -703,6 +712,11 @@
+ 	return str;
+ }
+ /* }}} */
++
++static zend_always_inline zend_bool xml_handler_aborted(void)
++{
++	return EG(exception) != NULL || ZEND_HAS_OOM();
++}
+ 
+ /* {{{ _xml_startElementHandler() */
+ void _xml_startElementHandler(void *userData, const XML_Char *name, const XML_Char **attributes)
+@@ -713,6 +727,10 @@
+ 	zval retval, args[3];
+ 
+ 	if (parser) {
++		if (UNEXPECTED(xml_handler_aborted())) {
++			return;
++		}
++
+ 		parser->level++;
+ 
+ 		tag_name = _xml_decode_tag(parser, (const char *)name);
+@@ -734,10 +752,21 @@
+ 				attributes += 2;
+ 
+ 				zend_string_release_ex(att, 0);
++				if (ZEND_HAS_OOM()) {
++					zend_string_release_ex(tag_name, 0);
++					zval_ptr_dtor(&args[0]);
++					zval_ptr_dtor(&args[1]);
++					zval_ptr_dtor(&args[2]);
++					return;
++				}
+ 			}
+ 
+ 			xml_call_handler(parser, &parser->startElementHandler, parser->startElementPtr, 3, args, &retval);
+ 			zval_ptr_dtor(&retval);
++			if (UNEXPECTED(xml_handler_aborted())) {
++				zend_string_release_ex(tag_name, 0);
++				return;
++			}
+ 		}
+ 
+ 		if (!Z_ISUNDEF(parser->data)) {
+@@ -772,6 +801,12 @@
+ 					attributes += 2;
+ 
+ 					zend_string_release_ex(att, 0);
++					if (ZEND_HAS_OOM()) {
++						zend_string_release_ex(tag_name, 0);
++						zval_ptr_dtor(&tag);
++						zval_ptr_dtor(&atr);
++						return;
++					}
+ 				}
+ 
+ 				if (atcnt) {
+@@ -797,6 +832,10 @@
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+ 	if (parser) {
++		if (UNEXPECTED(xml_handler_aborted())) {
++			return;
++		}
++
+ 		zval retval, args[2];
+ 
+ 		zend_string *tag_name = _xml_decode_tag(parser, (const char *)name);
+@@ -807,6 +846,10 @@
+ 
+ 			xml_call_handler(parser, &parser->endElementHandler, parser->endElementPtr, 2, args, &retval);
+ 			zval_ptr_dtor(&retval);
++			if (UNEXPECTED(xml_handler_aborted())) {
++				zend_string_release_ex(tag_name, 0);
++				return;
++			}
+ 		}
+ 
+ 		if (!Z_ISUNDEF(parser->data)) {
+@@ -832,7 +875,10 @@
+ 		zend_string_release_ex(tag_name, 0);
+ 
+ 		if ((parser->ltags) && (parser->level <= XML_MAXLEVEL)) {
+-			efree(parser->ltags[parser->level-1]);
++			if (parser->ltags[parser->level-1]) {
++				efree(parser->ltags[parser->level-1]);
++				parser->ltags[parser->level-1] = NULL;
++			}
+ 		}
+ 
+ 		parser->level--;
+@@ -846,6 +892,10 @@
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+ 	if (parser) {
++		if (UNEXPECTED(xml_handler_aborted())) {
++			return;
++		}
++
+ 		zval retval, args[2];
+ 
+ 		if (!Z_ISUNDEF(parser->characterDataHandler)) {
+@@ -853,6 +903,9 @@
+ 			_xml_xmlchar_zval(s, len, parser->target_encoding, &args[1]);
+ 			xml_call_handler(parser, &parser->characterDataHandler, parser->characterDataPtr, 2, args, &retval);
+ 			zval_ptr_dtor(&retval);
++			if (UNEXPECTED(xml_handler_aborted())) {
++				return;
++			}
+ 		}
+ 
+ 		if (!Z_ISUNDEF(parser->data)) {
+@@ -938,7 +991,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->processingInstructionHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->processingInstructionHandler)) {
+ 		zval retval, args[3];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -955,7 +1008,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->defaultHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->defaultHandler)) {
+ 		zval retval, args[2];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -976,7 +1029,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->unparsedEntityDeclHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->unparsedEntityDeclHandler)) {
+ 		zval retval, args[6];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -1000,7 +1053,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->notationDeclHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->notationDeclHandler)) {
+ 		zval retval, args[5];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -1024,7 +1077,7 @@
+ 	xml_parser *parser = XML_GetUserData(parserPtr);
+ 	int ret = 0; /* abort if no handler is set (should be configurable?) */
+ 
+-	if (parser && !Z_ISUNDEF(parser->externalEntityRefHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->externalEntityRefHandler)) {
+ 		zval retval, args[5];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -1049,7 +1102,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->startNamespaceDeclHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->startNamespaceDeclHandler)) {
+ 		zval retval, args[3];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -1066,7 +1119,7 @@
+ {
+ 	xml_parser *parser = (xml_parser *)userData;
+ 
+-	if (parser && !Z_ISUNDEF(parser->endNamespaceDeclHandler)) {
++	if (parser && !xml_handler_aborted() && !Z_ISUNDEF(parser->endNamespaceDeclHandler)) {
+ 		zval retval, args[2];
+ 
+ 		ZVAL_COPY(&args[0], &parser->index);
+@@ -1431,8 +1484,10 @@
+ 		ZVAL_COPY_VALUE(&parser->info, info);
+ 	}
+ 
++	xml_parser_free_ltags(parser);
+ 	parser->level = 0;
+ 	parser->ltags = safe_emalloc(XML_MAXLEVEL, sizeof(char *), 0);
++	memset(parser->ltags, 0, XML_MAXLEVEL * sizeof(char *));
+ 
+ 	XML_SetElementHandler(parser->parser, _xml_startElementHandler, _xml_endElementHandler);
+ 	XML_SetCharacterDataHandler(parser->parser, _xml_characterDataHandler);

@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `057c4c0286e249ba2c6db4c66cc82ba97e562376b0e8356d3512e045ff361d78`。`/private/tmp/php-backport-73-dom-xmlwriter-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、DOM・XMLWriter・iconv・libxml・SimpleXML を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `ff52236d7e798df1d7d118db42bb223219a1dfbb037225259769a654e05365d3`。同じバイナリで通常 DOM XPath・XMLWriter 出力、良性 XMLWriter OOM 後の要求中断・同一 worker 継続、通常 iconv・SimpleXML とそれぞれの指定 OOM、zlib フィルター OOM、3保存形式の通常機能・予約名プロパティ保持、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-dom-xmlwriter-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限る。
+7.3.33 の現候補 SHA-256 は `e92046898bcccb625822f7f7650348a502bfc3d0c449908dab9397f921058d36`。`/private/tmp/php-backport-73-xml-sax-clean/patch/7.3.33/` で固定ソースへの fuzz なし適用、XML SAX を含む Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。同じバイナリでXML SAX・DOM XPath・XMLWriter・iconv・libxml・SimpleXMLの通常動作と指定した良性OOM後の同一ワーカー再利用、3保存形式の通常multipart、指定したセッション復号OOM後の保存ファイル不変性を確認した。結果は `/private/tmp/php-backport-73-xml-sax-clean/patch/7.3.33/defense-check.log`。これは指定した入力と失敗地点に限り、Expat構成は未検証。
 
 前段の cURL 受信コールバックは、返却バッファの拡張失敗時に libcurl へ失敗を返す。コンテナ内の `file://` で通常受信と、12MiB 受信時の良性OOM後の同一ワーカー継続を確認した。外部HTTP応答や cURL の他の書き込みモード、各割当失敗地点は未判定。
 
@@ -30,10 +30,12 @@
 
 ## 次の作業
 
-1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。次は `ext/xml/xml.c` のSAXコールバックとタグ配列の初期化・解放を一組で移植する。upload progress 中の他の復号 OOM 地点と要求間状態を判定し、公式修正に対応する未判定ファイルを閉じる。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかに push する。
+1. 7.3.33 の他の大型割当・再割当・拡張、異常終了後の状態寿命を調査する。XML SAX候補はlibxml構成で検証済みで、Expatの非失敗可能割当を別途判定する。upload progress 中の他の復号 OOM 地点と要求間状態を判定し、公式修正に対応する未判定ファイルを閉じる。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかに push する。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
+
+公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
 ユーザーの今回の明示許可により `staticwebos-build` VM を正常停止し、`php-backport-lab` で7.3.33 クリーンビルド・検査を実施した。検証後、`php-backport-lab` は正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
