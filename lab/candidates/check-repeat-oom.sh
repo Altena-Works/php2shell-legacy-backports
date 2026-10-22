@@ -12,6 +12,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-chunk-limit.php:/var/www/html/normal-chunk-limit.php:ro" \
     -v "$script_dir/normal-nl2br-limit.php:/var/www/html/normal-nl2br-limit.php:ro" \
     -v "$script_dir/normal-unpack-limit.php:/var/www/html/normal-unpack-limit.php:ro" \
+    -v "$script_dir/normal-shmop.php:/var/www/html/normal-shmop.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
     -v "$script_dir/normal-array-fill-limit.php:/var/www/html/normal-array-fill-limit.php:ro" \
@@ -65,6 +66,22 @@ normal_nl2br=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_unpack=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-unpack-limit.php)
 [[ $normal_unpack == UNPACK_OK ]] || { printf 'normal unpack failed: %s\n' "$normal_unpack" >&2; exit 1; }
+normal_shmop=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-shmop.php)
+[[ $normal_shmop == SHMOP_OK ]] || { printf 'normal shmop failed: %s\n' "$normal_shmop" >&2; exit 1; }
+printf 'SHMOP_NORMAL_REPORTED\n'
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/shmop-limit.out 'http://127.0.0.1/normal-shmop.php?limit=1' >/dev/null
+shmop_result=$(podman exec "$container_id" tail -c 500 /tmp/shmop-limit.out)
+after_shmop=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $shmop_result == *READY* && $shmop_result == *'Allowed memory size of 8388608 bytes exhausted'* && $shmop_result != *RETURNED* ]] || {
+    printf 'expected shmop soft OOM and request abort missing: %s\n' "$shmop_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_shmop%%$'\n'*} ]] || {
+    printf 'Apache worker changed after shmop soft OOM\n' >&2; exit 1;
+}
+printf 'SHMOP_OOM_REPORTED\n'
 normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-wordwrap-limit.php)
 [[ $normal_wordwrap == WORDWRAP_OK ]] || { printf 'normal wordwrap failed: %s\n' "$normal_wordwrap" >&2; exit 1; }

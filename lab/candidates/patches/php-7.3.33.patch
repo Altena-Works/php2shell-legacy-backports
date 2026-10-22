@@ -4034,3 +4034,19 @@
  			if (arg != 1 || namelen == 0) {
  				/* Need to add element number to name */
  				snprintf(n, sizeof(n), "%.*s%d", namelen, name, i + 1);
+--- a/ext/shmop/shmop.c
++++ b/ext/shmop/shmop.c
+@@ -259,7 +259,12 @@
+ 	startaddr = shmop->addr + start;
+ 	bytes = count ? count : shmop->size - start;
+ 
+-	return_string = zend_string_init(startaddr, bytes, 0);
++	return_string = zend_string_safe_falloc(bytes, 1, 0, 0);
++	if (UNEXPECTED(!return_string)) {
++		RETURN_OOM();
++	}
++	memcpy(ZSTR_VAL(return_string), startaddr, bytes);
++	ZSTR_VAL(return_string)[bytes] = '\0';
+ 
+ 	RETURN_NEW_STR(return_string);
+ }

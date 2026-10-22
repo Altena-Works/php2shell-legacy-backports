@@ -101,7 +101,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
         set -e
         if [ ! -f Makefile ]; then
             case "$PHP_MATRIX_VERSION" in
-                7.*) set -- --enable-json --enable-filter ;;
+                7.*) set -- --enable-json --enable-filter --enable-shmop ;;
                 *) set -- ;;
             esac
             ./configure --prefix=/opt/php-backport --with-apxs2=/usr/bin/apxs \
