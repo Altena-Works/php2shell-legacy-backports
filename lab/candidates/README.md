@@ -4,10 +4,10 @@
 
 | 版 | 現行候補 | 確認済み | 未完了 |
 | --- | --- | --- | --- |
-| 7.3.33 | [統合パッチ](patches/php-7.3.33.patch) (`99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12`) | 固定元ソースへのfuzzなし適用、Linux x86_64・Apache/mod_phpのクリーンビルド、版別正常系と指定した良性OOM検査 | 残る公式差分、upload progressの全要求境界、mbstringのHTTP入力・未判定libmbfl経路など |
+| 7.3.33 | [統合パッチ](patches/php-7.3.33.patch) (`4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64`) | 固定元ソースへのfuzzなし適用。前候補のクリーンビルドと版別検査、追加差分の増分ビルドと通常復号・良性OOM検査 | 現候補の全体クリーンビルド、残る公式差分、upload progressの全要求境界、mbstringのHTTP入力・未判定libmbfl経路など |
 | 5.6.40 | [統合パッチ](patches/php-5.6.40.patch) (`f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f`) | 固定元ソースへのfuzzなし適用、先行候補のクリーンビルド、追加修正後の増分ビルドと通常セッション・multipart | 遅延OOM、soft OOM後のワーカー継続、追加修正後のクリーンビルド |
 
-7.3.33の最新のクリーンビルドと版別検査の記録は `/private/tmp/php-backport-73-kana-clean-2/patch/7.3.33/`。通常のmbstring入力変換・文字コード変換・正規表現置換・全角半角変換、および指定した良性OOM後の同一ワーカー継続を確認しました。個々の確保失敗地点や未搭載拡張まで確認した結果ではありません。
+7.3.33の前候補のクリーンビルドと版別検査の記録は `/private/tmp/php-backport-73-kana-clean-2/patch/7.3.33/`。現候補の復号側追加差分はそのビルドに適用して増分検証しました。許可クラス名割当そのもののOOMは未実測です。
 
 ```bash
 bash lab/run-matrix.sh --versions 7.3.33 --jobs 1 \

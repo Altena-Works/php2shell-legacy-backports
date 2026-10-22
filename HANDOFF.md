@@ -13,20 +13,20 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用し、EXIF・SOAP・mbstring有効のLinux/amd64クリーンビルドとApache/mod_php版別正常系・良性OOM検査を通過。XML SAX・JSON文字列復号・zlib・SimpleXML・iconv・XMLWriterの指定経路で良性OOM後の同一worker継続、3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認。XMLは前候補でlibxml/Expat両構成を検証 | 他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。直前候補はEXIF・SOAP・mbstring有効のLinux/amd64クリーンビルドとApache/mod_php版別検査を通過。現候補の復号側追加差分は増分ビルドと限定検査を通過。3保存形式の通常multipartと予約名プロパティ保持、指定地点のセッション復号OOM後の保存ファイル不変性を確認 | 現候補の全体クリーンビルド、他の大型割当・再割当・拡張、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12`。libmbflのバッファ失敗状態、filter/flush、結果引渡しとPHP呼び出し元に加え、全角・半角変換で失敗時の部分結果を返さず解放する処理を追加した。固定元ソースへのfuzzなし適用、Linux/amd64・Apache/mod_phpのクリーンビルドと版別検査は `pass`。生成モジュール SHA-256 は `ea73f29fa4c7bb1f51d1087201863613c7ec5ea73180c07a3ce14e92e0aeaa68`。証拠は `/private/tmp/php-backport-73-kana-clean-2/patch/7.3.33/`。全経路遮断の確認には達していない。前候補の他経路の記録は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)。
+7.3.33 の現候補 SHA-256 は `4ad0c464ae372aeb7a3f9b958ea3ecd67a5096870d4399715ce116ae663c6c64`。libmbflの失敗処理に加え、許可クラス名の復号時小文字化に失敗可能な割当を使う。固定元ソースへのfuzzなし適用を確認した。前候補 `99972d1716c65f1ecc76bebed2674ad7fa3c34af7644a6a19d12e66450dadf12` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補の追加差分は増分コンパイル・リンク、3保存形式と許可クラスを含む通常復号、通常配列の良性OOM後の同一ワーカー継続を通過した。増分生成モジュール SHA-256 は `73a7a98afc81c7ed877adf1a2f7dbc7f384514fdf1f85b26d8df6cdcc48775c8`。現候補の全体クリーンビルドと、許可クラス名割当そのもののOOMは未実測。全経路遮断の確認には達していない。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
 5.6.40 の遅延OOMについて公式8.2.34→8.2.35の差分を再照合した。`zend_alloc.c` のhard limit・保留状態と、VM、関数呼出し、POST、主スクリプト境界が結合している。5.6にアロケータのみを移植する案は採用しない。5.6.40候補の実装・実測状態は前回から変わらない。
 
-現候補のクリーンビルドでは `Zend/zend_smart_str.h:136` に `-Wstringop-overflow` 警告が出た。EXIF追加前のクリーンビルドにも同じ警告があり、今回のEXIF差分が導入したものではない。偽陽性か実際の境界不備かは未判定として別途照合する。
+直前候補のクリーンビルドでは `Zend/zend_smart_str.h:136` に `-Wstringop-overflow` 警告が出た。EXIF追加前のクリーンビルドにも同じ警告があり、今回のEXIF差分が導入したものではない。偽陽性か実際の境界不備かは未判定として別途照合する。
 
 SOAPを7.3の旧APIに移した前候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は、固定元ソースへのfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェック `pass` を確認した。通常SOAP往復は `SOAP_OK`。大きな通常SOAP応答の8 MiB制限下でOOM報告と同一Apacheワーカーの次要求処理を確認した。実測はHTTP応答本文の経路のみで、chunked応答、引数・多次元復号や他の確保失敗地点は未検証。証拠は `/private/tmp/php-backport-73-soap-final-clean/patch/7.3.33/`。
 
@@ -41,7 +41,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
-ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で7.3.33のクリーンビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
+ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で7.3.33の増分ビルドと検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
 ユーザーがGitHub証明書について通常のpushを許可したため、TLS検証を無効化せず作業ブランチへ送信できた。main/masterへのpushは行わない。
 
