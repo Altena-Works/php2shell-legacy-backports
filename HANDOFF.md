@@ -6,9 +6,9 @@
 
 このリポジトリは CVE-2026-109618（OOM 時の不完全な状態）と CVE-2026-109619（要求間に残る状態）について、公式修正を PHP 5〜7 の最終 `x.y.z` へ移植する作業を扱う。**両件の全経路遮断を確認した版はまだない。** PHP 8.0/8.1 などの公式配布物は同梱しない。旧版の正常機能を維持し、攻撃コード・PoC を作成または実行しない。
 
-追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。[PHP公式の検証済み Issue #24488](https://github.com/php/php-src/issues/24488)のSimpleXML/GC二重解放は8.4.27/8.5.12の別件回帰で、[公式修正コミット](https://github.com/php/php-src/commit/f963484)によりIssueは閉じられた。固定したPHP 5〜7最終版の元アーカイブ12件には原因となるGH-24050のGC追加処理がなく、[版別判定](notes/double-free-24488-triage.md)では直接該当しない。SNS画像との同一性や旧版固有の別経路は未判定。記事内のZIP・PoCは取得も実行もしていない。
+追加公開情報：[php2shell-zeros](https://jackalsyn.com/posts/php2shell-zeros.html) は、修正版8.5.12でもセッション保存形式の読み書き不一致、upload progress のキー処理、拒否時のセッション消失が残ると報告する。さらに `unserialize()` の再入による UAF を報告するが、これらの記事中の再現結果と旧版への該当性は本作業では未検証。[PHP公式の検証済み Issue #24488](https://github.com/php/php-src/issues/24488)のSimpleXML/GC二重解放は8.4.27/8.5.12の別件回帰で、[公式修正コミット](https://github.com/php/php-src/commit/f963484)によりIssueは閉じられた。固定したPHP 5〜7最終版の元アーカイブ12件には原因となるGH-24050のGC追加処理がなく、[版別判定](notes/double-free-24488-triage.md)では直接該当しない。[SNS画像の元投稿](https://fedi.katze.sh/@elise/117479383739450605)には「今回修正された脆弱性とは別」という追記があると複数の引用で確認したが、Issue #24488との同一性や旧版固有の別経路は未判定。記事内のZIP・PoCは取得も実行もしていない。
 
-公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDF、EXIF、SOAP、mbstringの入力変換と正規表現の公式差分に対応する複数経路などを移植・限定検証した。機械的な未変更・未判定リストは13件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
+公式8.2.34→8.2.35のOOM・要求境界に関連する追加行を調べた当初、7.3.33候補に変更がないファイルは48件あった。うち46件は7.3.33にも存在し、2件は存在しない。現在は `shmop_read`、Cookie、ファイル・画像処理、JSONパーサの一部、tokenizer、fileinfo/CDF、EXIF、SOAP、mbstringの入力変換・正規表現・libmbfl出力などを候補へ移植し限定検証した。機械的な未変更・未判定リストは11件。版間の違いを個別判定する必要があり、正式版公開に必要な全経路遮断の証拠は揃っていない。詳細は[遮断範囲の監査](notes/coverage-audit-2026-10-22.md)。
 
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
@@ -20,7 +20,7 @@
 
 ## 最新の検証
 
-7.3.33 の候補は `wordwrap()` の最終縮小を元の非失敗可能処理に戻した。これはレビューで指摘された、縮小時の一時確保が soft OOM を起こす回帰を避ける変更。固定元ソースへの fuzz なし dry-run は通過したが、この変更後のビルド・実機検査は未実施。前候補（SHA-256 `a3bc4061fa7186980400220cdba03fa0e6e102a6a217aba71a50dd0f1a79fa6f`）のtokenizer、CDF、cURL、SPL、セッション、XMLなどの版別検査は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)に記録。
+7.3.33 の現候補 SHA-256 は `a69c2d0ce93f8561d231e36dd32d82bff2b32ff75950c72a57d19779806cbd4f`。`wordwrap()` の最終縮小を元の非失敗可能処理に戻した。libmbflのバッファ失敗状態、filter/flush、結果引渡しとPHP呼び出し元の処理を追加し、固定元ソースへ fuzz なし適用できた。前段候補 `aee2d8406943a77eafcb256238ecc61d79e75c6c2eb0366e0d20fa03a4a2e997` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。現候補はそのビルドへ `mbfilter.c` と `mbstring.c` の追加修正を適用して増分コンパイル・リンク、通常mbstring機能と良性OOM検査を通過した。**現候補の全体クリーンビルドは未実施。** 前候補の他経路の記録は[個別経路の検証履歴](archive/HANDOFF-2026-10-22-path-verification.md)。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -30,7 +30,7 @@ EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結
 
 SOAPを7.3の旧APIに移した前候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は、固定元ソースへのfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェック `pass` を確認した。通常SOAP往復は `SOAP_OK`。大きな通常SOAP応答の8 MiB制限下でOOM報告と同一Apacheワーカーの次要求処理を確認した。実測はHTTP応答本文の経路のみで、chunked応答、引数・多次元復号や他の確保失敗地点は未検証。証拠は `/private/tmp/php-backport-73-soap-final-clean/patch/7.3.33/`。
 
-mbstring入力変換・正規表現の候補は、固定元ソースへfuzzなし適用、Linux/amd64・Apache/mod_phpのmbstring有効クリーンビルドと版別チェック `pass` を確認。通常 `mb_parse_str`・文字コード変換・置換は `MBSTRING_OK`、8 MiB制限下の良性入力変換・置換はOOM報告後も同一ワーカー継続。`/private/tmp/php-backport-73-mbstring-clean/patch/7.3.33/` に証拠を保存した。GET/Cookie/POSTの直接入口、callback・旧 `e` モードのOOMは未検証。libmbflにはバッファ拡張失敗、終端NUL追加失敗、filter/flush戻り値の消失が残る。PHP 7.3の割当器コールバックと装置・呼出元を一緒に修正し、実測する必要がある。
+mbstring入力変換・正規表現の前候補はLinux/amd64・Apache/mod_phpで通常動作と良性OOM後の同一ワーカー継続を確認。今回のlibmbfl候補では、Quoted-Printableの通常往復、`mb_ord`、`mb_substr_count`、MIMEヘッダの通常動作と、libmbfl出力の8 MiB制限下でのOOM報告・同一ワーカー継続を確認した。修正前候補では同じ良性OOM要求のHTTP応答が途中で切れた。現候補の増分ビルド済みモジュール SHA-256 は `8ae1960bb7217a0df555af870c7de30b6caec875ed46f953e2048e6f67227d1e`。証拠は `/private/tmp/php-backport-73-libmbfl-final-clean/`。GET/Cookie/POSTの直接入口、regex callback・旧 `e` モードのOOM、libmbfl各失敗地点は未実測。`mbfl_strcut` など無視されたfilter結果は続けて監査する。
 
 ## 次の作業
 

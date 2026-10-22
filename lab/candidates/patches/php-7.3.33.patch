@@ -7752,7 +7752,22 @@
  }
  
  
-@@ -1123,7 +1143,9 @@
+@@ -1053,8 +1073,12 @@
+ 	if (filter == NULL) {
+ 		return (size_t) -4;
+ 	}
+-	mbfl_convert_filter_feed_string(filter, needle->val, needle->len);
+-	mbfl_convert_filter_flush(filter);
++	if (mbfl_convert_filter_feed_string(filter, needle->val, needle->len) < 0 ||
++		mbfl_convert_filter_flush(filter) < 0) {
++		mbfl_convert_filter_delete(filter);
++		mbfl_wchar_device_clear(&pc.needle);
++		return (size_t) -4;
++	}
+ 	mbfl_convert_filter_delete(filter);
+ 	pc.needle_len = pc.needle.pos;
+ 	if (pc.needle.buffer == NULL) {
+@@ -1123,7 +1147,9 @@
  	}
  
  	if (pc->output >= pc->start) {
@@ -7763,7 +7778,7 @@
  	}
  
  	pc->output++;
-@@ -1250,6 +1272,7 @@
+@@ -1250,6 +1276,7 @@
  		if (decoder == NULL || encoder == NULL) {
  			mbfl_convert_filter_delete(encoder);
  			mbfl_convert_filter_delete(decoder);
@@ -7771,7 +7786,7 @@
  			return NULL;
  		}
  		pc.next_filter = decoder;
-@@ -1269,9 +1292,14 @@
+@@ -1269,9 +1296,14 @@
  			}
  		}
  
@@ -7789,6 +7804,50 @@
  		mbfl_convert_filter_delete(encoder);
  		mbfl_convert_filter_delete(decoder);
  	}
+@@ -2007,6 +2039,10 @@
+ mbfl_string *
+ mime_header_encoder_result(struct mime_header_encoder_data *pe, mbfl_string *result)
+ {
++	if (pe->tmpdev.failed) {
++		mbfl_memory_device_clear(&pe->outdev);
++		return NULL;
++	}
+ 	if (pe->status1 >= 10) {
+ 		(*pe->conv2_filter->filter_flush)(pe->conv2_filter);
+ 		(*pe->encod_filter->filter_flush)(pe->encod_filter);
+@@ -2020,6 +2056,10 @@
+ 			}
+ 		}
+ 		mbfl_memory_device_devcat(&pe->outdev, &pe->tmpdev);
++	}
++	if (pe->tmpdev.failed) {
++		mbfl_memory_device_clear(&pe->outdev);
++		return NULL;
+ 	}
+ 	mbfl_memory_device_reset(&pe->tmpdev);
+ 	pe->prevpos = 0;
+@@ -2367,6 +2407,10 @@
+ mbfl_string *
+ mime_header_decoder_result(struct mime_header_decoder_data *pd, mbfl_string *result)
+ {
++	if (pd->tmpdev.failed) {
++		mbfl_memory_device_clear(&pd->outdev);
++		return NULL;
++	}
+ 	switch (pd->status) {
+ 	case 1:
+ 	case 2:
+@@ -2384,6 +2428,10 @@
+ 		break;
+ 	}
+ 	(*pd->conv2_filter->filter_flush)(pd->conv2_filter);
++	if (pd->tmpdev.failed) {
++		mbfl_memory_device_clear(&pd->outdev);
++		return NULL;
++	}
+ 	mbfl_memory_device_reset(&pd->tmpdev);
+ 	pd->status = 0;
+ 
 --- a/ext/mbstring/mbstring.c
 +++ b/ext/mbstring/mbstring.c
 @@ -648,7 +648,7 @@
@@ -7835,3 +7894,18 @@
  	// TODO: avoid reallocation ???
   	RETVAL_STRINGL((char *)result.val, result.len);		/* the string is already strdup()'ed */
  	efree(result.val);
+@@ -4873,8 +4882,12 @@
+ 			return -1;
+ 		}
+ 
+-		mbfl_convert_filter_feed_string(filter, (const unsigned char *) str, str_len);
+-		mbfl_convert_filter_flush(filter);
++		if (mbfl_convert_filter_feed_string(filter, (const unsigned char *) str, str_len) < 0 ||
++			mbfl_convert_filter_flush(filter) < 0) {
++			mbfl_convert_filter_delete(filter);
++			mbfl_wchar_device_clear(&dev);
++			return -1;
++		}
+ 
+ 		if (dev.pos < 1 || filter->num_illegalchar || dev.buffer[0] >= MBFL_WCSGROUP_UCS4MAX) {
+ 			mbfl_convert_filter_delete(filter);
