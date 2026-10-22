@@ -70,6 +70,7 @@ if [[ $version == 7.3.33 ]]; then
     bash "$script_dir/candidates/check-exif-normal.sh" "$source_tree"
     bash "$script_dir/candidates/check-soap-normal.sh" "$source_tree"
     bash "$script_dir/candidates/check-soap-oom.sh" "$source_tree"
+    bash "$script_dir/candidates/check-bz2-oom.sh" "$source_tree"
     bash "$script_dir/candidates/check-mbstring-normal.sh" "$source_tree"
     bash "$script_dir/candidates/check-mbstring-oom.sh" "$source_tree"
     bash "$script_dir/candidates/check-strcut-oom.sh" "$source_tree"

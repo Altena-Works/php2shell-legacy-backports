@@ -35,7 +35,7 @@
 | `exif`、`soap` 3ファイル（いずれも一部変更済み） | 失敗可能な確保、OOM後の中断・後始末 | 個々の失敗地点と各分岐を確認 |
 | `mbstring` 3ファイル（ほか2ファイルは一部変更済み） | バッファ再確保と文字列処理の失敗伝播 | 旧版のlibmbfl APIから呼び出し元まで一組で移植。`mbfilter.c`、`mbfilter_qprint.c` など同名差分の機械的リスト外も追う |
 | `Zend` 3ファイル、`opcache` | interned string の失敗可能な確保と初期化 | 復号側の代替実装だけで足りるかOPcacheを含めて判定 |
-| `bz2` 2ファイル、`gd`、`imap`、`intl` 2ファイル | 圧縮・画像・メール・ICU経路の失敗可能な確保またはOOM中断 | GD/WBMPは個別コンパイルのみ通過。IMAPは候補へ追加したが開発ヘッダ不足で未コンパイル。intlは候補へ追加し、通常動作と良性OOM後の同一ワーカー継続を実測。対象拡張をビルドできる依存ファイルと構成を固定してから実測。既存ビルダーではbzip2開発ファイルとGD用libpng開発ファイルが不足 |
+| `bz2` 2ファイル、`gd`、`imap`、`intl` 2ファイル | 圧縮・画像・メール・ICU経路の失敗可能な確保またはOOM中断 | bzip2は有効構成のクリーンビルド、通常系と展開OOM後の同一ワーカー継続を確認。GD/WBMPは個別コンパイルのみ通過。IMAPは開発ヘッダ不足で未コンパイル。intlは通常動作と良性OOM後の同一ワーカー継続を実測。GD・IMAPの実測と各失敗地点の判定が残る |
 
 これは公式差分を移植作業へ割り付けた一覧であり、各経路の遮断判定ではない。
 
@@ -45,6 +45,6 @@ SOAPの多次元配列復号、HTTP応答バッファ、引数復号とOOM中の
 
 mbstring候補は `mb_gpc.c` と `php_mbregex.c` に加え、7.3固有のlibmbfl割当器・メモリ装置・filter/flush・PHP呼び出し元を修正した。前候補 `044fe9c50437c0070fbbbaca59bfd5c1ec9c098c62526600308e93bacd7fa232` はLinux/amd64・Apache/mod_phpのクリーンビルドと版別検査 `pass`。前候補では文字幅計算のfilter失敗伝播も追加。固定ソースへの厳密適用、追加差分の増分ビルドと通常の `mb_strwidth`・`mb_strimwidth` 検査を通過。mbfl_strcut追加前候補のintl・OPcache有効クリーンビルドと版別検査は通過。許可クラス名・キーの各割当失敗地点、キー重複排除の性能影響、GET/Cookie/POST直接入口、regex callback・旧 `e` モード、libmbfl各失敗地点は未検証。`mbfl_strcut` の失敗停止は候補へ追加し増分ビルド・通常動作・良性OOM後の同一ワーカー継続を確認。filter途中の各失敗地点と他の戻り値を無視する経路は継続監査する。
 
-`ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2の圧縮・展開時の失敗可能割当とフィルター中断を候補へ追加し、固定元ソースへのfuzzなし適用を確認。既存の隔離ビルダーに `bzlib.h` とリンク用 `libbz2.so` がなく、既存ビルドヘッダとローカルSDKの `bzlib.h` によるLinux/amd64構文・型検査は通過。bzip2有効のリンク・Apache実動作は未検証。
+`ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2の圧縮・展開時の失敗可能割当とフィルター中断を候補へ追加し、bzip2有効のLinux/amd64・Apache/mod_phpクリーンビルド、通常圧縮・展開・フィルター、良性の展開OOM後の同一ワーカー継続を確認。圧縮時と各再確保地点の個別OOMは未判定。
 
 候補パッチに含まれるファイルも行単位の等価性は未証明。特にセッションの異常終了境界、JSON/PCRE内部割当、SPLの複製・復元、cURLの他モード、zlibの各割当地点を別に扱う。
