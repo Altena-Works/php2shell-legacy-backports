@@ -2,7 +2,7 @@
 
 ## 確認できたこと
 
-[PHP公式 Issue #24488](https://github.com/php/php-src/issues/24488) は、PHP 8.4.27/8.5.12でSimpleXMLのpropertiesテーブルがGCによって二重解放される回帰として `Status: Verified`。原因はGH-24050の変更で、GCが `get_gc()` の返すHashTableをgarbage bufferへ追加する一方、SimpleXMLが別の解放経路を使うこと。[修正PR #24494](https://github.com/php/php-src/pull/24494) は確認時点でopenであり、リリース済み修正としては扱わない。投稿されたSNS画像とこのIssueが同一事象かは、画像だけでは確定できない。
+[PHP公式 Issue #24488](https://github.com/php/php-src/issues/24488) は、PHP 8.4.27/8.5.12でSimpleXMLのpropertiesテーブルがGCによって二重解放される回帰として検証され、2026-10-22に[修正コミット `f963484`](https://github.com/php/php-src/commit/f963484)で閉じられた。原因はGH-24050の変更で、GCが `get_gc()` の返すHashTableをgarbage bufferへ追加する一方、SimpleXMLが別の解放経路を使うこと。[当初の修正PR #24494](https://github.com/php/php-src/pull/24494) は確認時点でopenだが、同じ一行の修正が公式ブランチに別コミットで取り込まれた。次の配布版への収録は未確認。投稿されたSNS画像とこのIssueが同一事象かは、画像だけでは確定できない。
 
 ## このリポジトリの旧版候補
 

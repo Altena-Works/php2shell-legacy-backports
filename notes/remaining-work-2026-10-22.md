@@ -23,10 +23,21 @@
 
 ## 7.3.33 の未変更・未判定ファイル
 
-公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが20件ある。直前の21件から `tokenizer.c` を候補へ追加した。これは機械的な調査リストであり、20件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
+公式 8.2.34→8.2.35 の追加行に OOM・失敗可能 API・要求初期化を示す語があり、7.3.33 に同名ファイルが存在するが現候補パッチでは直接変更していないものが19件ある。当初の21件から `tokenizer.c` と `fileinfo/libmagic/cdf.c` を候補へ追加した。これは機械的な調査リストであり、19件すべてへの変更が必要という意味ではない。版差による代替処理と拡張の搭載有無も調べる。
 
 - Zend: `zend_compile.c`、`zend_operators.c`、`zend_string.c`。復号側の代替実装を含め、同等性を判定する。
-- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`exif/exif.c`、`fileinfo/libmagic/cdf.c`、`gd/libgd/wbmp.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`。`tokenizer/tokenizer.c`、`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c`、`xml/xml.c`、`json/json_scanner.c` は変更済みだが個々の失敗地点は未判定。
+- 拡張: `bz2/bz2.c`、`bz2/bz2_filter.c`、`exif/exif.c`、`gd/libgd/wbmp.c`、`imap/php_imap.c`、`intl/converter/converter.c`、`intl/normalizer/normalizer_normalize.c`、`mbstring/libmbfl/mbfl/mbfl_encoding.h`、`mbstring/libmbfl/mbfl/mbfl_memory_device.c`、`mbstring/mb_gpc.c`、`mbstring/mbstring.c`、`mbstring/php_mbregex.c`、`opcache/ZendAccelerator.c`、`soap/php_encoding.c`、`soap/php_http.c`、`soap/soap.c`。`fileinfo/libmagic/cdf.c`、`tokenizer/tokenizer.c`、`zlib/zlib_filter.c`、`libxml/libxml.c`、`simplexml/simplexml.c`、`iconv/iconv.c`、`dom/xpath.c`、`xmlwriter/php_xmlwriter.c`、`xml/xml.c`、`json/json_scanner.c` は変更済みだが個々の失敗地点は未判定。
+
+現行候補に変更がない19ファイルはすべて7.3.33にも存在する。公式差分の入口ごとの判定は未完了だが、次の移植順は以下とする。
+
+| 対象 | 公式差分の主な内容 | 次の確認 |
+| --- | --- | --- |
+| `exif`、`soap` 3ファイル | 失敗可能な確保、OOM後の中断・後始末 | 現行ビルダーのlibxml構成で有効化し、通常機能と良性OOMを確認 |
+| `mbstring` 5ファイル | バッファ再確保と文字列処理の失敗伝播 | 旧版のlibmbfl APIから呼び出し元まで一組で移植 |
+| `Zend` 3ファイル、`opcache` | interned string の失敗可能な確保と初期化 | 復号側の代替実装だけで足りるかOPcacheを含めて判定 |
+| `bz2` 2ファイル、`gd`、`imap`、`intl` 2ファイル | 圧縮・画像・メール・ICU経路の失敗可能な確保またはOOM中断 | 対象拡張をビルドできる依存ファイルと構成を固定してから実測。既存ビルダーではbzip2開発ファイルとGD用libpng開発ファイルが不足 |
+
+これは公式差分を移植作業へ割り付けた一覧であり、各経路の遮断判定ではない。
 
 `ext/json/json_scanner.re` と生成済み `json_scanner.c` に、公式8.2.35の文字列確保失敗処理を旧版の失敗可能APIで移植した。固定ソースへの厳密適用、Linux/amd64・Apache/mod_phpのクリーンビルド、通常JSON復号と良性の長いJSON文字列復号でOOM後の同一ワーカー継続を確認。bzip2は公式差分に圧縮・展開時の失敗可能割当とフィルター中断があるが、既存の隔離ビルダーに `bzlib.h` とリンク用 `libbz2.so` がなく、実機相当の検証は未実施。実装済みとは扱わない。
 

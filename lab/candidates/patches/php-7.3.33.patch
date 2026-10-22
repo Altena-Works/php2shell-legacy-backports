@@ -6859,3 +6859,28 @@
  			zval_ptr_dtor(&token_stream);
  		}
  
+--- a/ext/fileinfo/libmagic/cdf.c
++++ b/ext/fileinfo/libmagic/cdf.c
+@@ -90,9 +90,19 @@
+ 			    CDF_TOLE8(CAST(uint64_t, x))))
+ #define CDF_GETUINT32(x, y)	cdf_getuint32(x, y)
+ 
+-#define CDF_MALLOC(n) emalloc(n)
+-#define CDF_REALLOC(p, n) erealloc(p, n)
+-#define CDF_CALLOC(n, u) ecalloc(n, u)
++#define CDF_MALLOC(n) _femalloc((n) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC)
++#define CDF_REALLOC(p, n) _safe_ferealloc((p), 1, (n), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC)
++#define CDF_CALLOC(n, u) cdf_calloc((n), (u))
++
++static void *cdf_calloc(size_t n, size_t u)
++{
++	void *data = _safe_femalloc(n, u, 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (!data) {
++		return NULL;
++	}
++	memset(data, 0, n * u);
++	return data;
++}
+ 
+ /*
+  * swap a short

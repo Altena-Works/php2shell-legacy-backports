@@ -64,4 +64,7 @@ if [[ $version == 7.3.33 ]]; then
     "$script_dir/candidates/check-dom-xmlwriter.sh" "$source_tree"
     "$script_dir/candidates/check-xml-sax.sh" "$source_tree"
     "$script_dir/candidates/check-upload-decode-oom.sh" "$source_tree"
+    bash "$script_dir/candidates/check-tokenizer-normal.sh" "$source_tree"
+    bash "$script_dir/candidates/check-tokenizer-oom.sh" "$source_tree"
+    bash "$script_dir/candidates/check-fileinfo-normal.sh" "$source_tree"
 fi
