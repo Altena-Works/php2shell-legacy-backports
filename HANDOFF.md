@@ -13,14 +13,14 @@
 | 版 | 実装・検証済みの範囲 | 残る作業 |
 | --- | --- | --- |
 | 5.6.40 | 機能維持候補を元アーカイブへ fuzz なし適用し、Linux/amd64・Apache/mod_php でクリーンビルド。割当上限の減算判定を追加して増分ビルドし、通常のセッション、multipart、upload progress、3 保存形式、参照値、ファイルなし投稿を再確認 | 通常 soft OOM 後はワーカーが終了する。遅延 OOM と全入口の状態消去、両 CVE の遮断は未完了 |
-| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。現候補はintl・OPcacheを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過。OPcache有効下の通常セッション・multipartと良性OOM後の同一ワーカー継続を確認 | IMAP・GD有効構成、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
+| 7.3.33 | 現行候補を固定済み元ソースへ fuzz なし適用。追加前候補はintl・OPcacheを含むLinux/amd64クリーンビルドとApache/mod_php版別検査を通過。現候補のmbfl_strcut追加差分は増分ビルドとfocused検査を通過 | IMAP・GD有効構成、upload progress中の他のOOM発生地点、両CVEの全経路は未判定 |
 | 5.0.5〜5.5.38、7.0.33〜7.2.34、7.4.33 | 対象版の調査・一部の元アーカイブ固定のみ | 5.6.40 と 7.3.33 の完了後に版別移植・検証 |
 
 `patches/` は配布用、`lab/candidates/patches/` は作業候補。候補の `pass` は実施した正常系と良性 OOM の成功だけを意味する。配布用パッチへの昇格や本番導入の承認ではない。5.6.40 と 7.3.33 の配布用 `checks/` は既知の未完了条件により終了コード 3 を返す。
 
 ## 最新の検証
 
-7.3.33 の現候補 SHA-256 は `cd7020485baaa92fdd99c42327473f546f7b1fd874066e04c94257a6c76bfaa8`。現候補の固定元ソースへのfuzzなし適用、intl・OPcache有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別検査 `pass`（`/private/tmp/php-backport-73-opcache-clean/patch/7.3.33/`）。PHPモジュール SHA-256 は `7af2166f7645192082ddbedc27d69bf55e8122c91e89c0a3b685c8f131b92692`、OPcacheは `8f14614e30b85b9f08797f834b98c7581a9b3601dee288ecf2e145ce0b0be39e`。intlのUConverterとNormalizerの通常動作を確認し、8 MiB制限で良性OOMが報告された後も同一Apacheワーカーが次要求を処理した。OOMの内部割当地点は特定していない。IMAPは開発ヘッダ不足でビルド・実測なし。GD/WBMPは個別の構文・型検査のみ通過。bzip2の圧縮・展開・フィルター修正は候補に追加し、固定元ソースへのfuzzなし適用を確認した。bzip2候補2ファイルは既存ビルドのヘッダとローカルSDKの `bzlib.h` を使いLinux/amd64で構文・型検査を通過。bzip2有効のリンク・Apache実動作は未検証。OPcache有効での通常セッション・multipartと良性OOM後の同一ワーカー継続を確認したが、interned key固有の割当失敗は未検証。全経路遮断の確認には達していない。
+7.3.33 の現候補 SHA-256 は `b7f35b668d465c6be2c38a4b27f0d8169a9c200c343ade27b7ea258052b3e2b9`。現候補の固定元ソースへのfuzzなし適用、追加前候補 `cd7020485baaa92fdd99c42327473f546f7b1fd874066e04c94257a6c76bfaa8` のintl・OPcache有効Linux/amd64・Apache/mod_phpクリーンビルドと版別検査 `pass`（`/private/tmp/php-backport-73-opcache-clean/patch/7.3.33/`）。PHPモジュール SHA-256 は `7af2166f7645192082ddbedc27d69bf55e8122c91e89c0a3b685c8f131b92692`、OPcacheは `8f14614e30b85b9f08797f834b98c7581a9b3601dee288ecf2e145ce0b0be39e`。intlのUConverterとNormalizerの通常動作を確認し、8 MiB制限で良性OOMが報告された後も同一Apacheワーカーが次要求を処理した。OOMの内部割当地点は特定していない。IMAPは開発ヘッダ不足でビルド・実測なし。GD/WBMPは個別の構文・型検査のみ通過。bzip2の圧縮・展開・フィルター修正は候補に追加し、固定元ソースへのfuzzなし適用を確認した。bzip2候補2ファイルは既存ビルドのヘッダとローカルSDKの `bzlib.h` を使いLinux/amd64で構文・型検査を通過。bzip2有効のリンク・Apache実動作は未検証。OPcache有効での通常セッション・multipartと良性OOM後の同一ワーカー継続を確認。現候補の`mbfl_strcut()`失敗停止追加は増分ビルド・リンクを通過し、ASCII・日本語ISO-2022-JPの通常動作、良性OOM後の同一ワーカー継続、mbstring・OPcacheのfocused回帰検査を通過。増分PHPモジュール SHA-256 は `c0d910008d0106a7659c772cdb95c8376cf19d65efbfe3f5689d0134ea650d7e`。現候補の全体クリーンビルド、filter内部各失敗地点、interned key固有の割当失敗は未検証。全経路遮断の確認には達していない。
 
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
@@ -30,7 +30,7 @@ EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結
 
 SOAPを7.3の旧APIに移した前候補 `da4d989a88258fcd0ed51de52342e2eec549c009c6bc83bc2e9ebd0f6e3f864e` は、固定元ソースへのfuzzなし適用、SOAP有効のLinux/amd64・Apache/mod_phpクリーンビルドと版別チェック `pass` を確認した。通常SOAP往復は `SOAP_OK`。大きな通常SOAP応答の8 MiB制限下でOOM報告と同一Apacheワーカーの次要求処理を確認した。実測はHTTP応答本文の経路のみで、chunked応答、引数・多次元復号や他の確保失敗地点は未検証。証拠は `/private/tmp/php-backport-73-soap-final-clean/patch/7.3.33/`。
 
-mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、`mb_convert_kana` の通常動作を確認した。libmbfl出力と全角・半角変換の8 MiB制限下での良性OOM報告・同一ワーカー継続も確認。GET/Cookie/POSTの直接入口、regex callback・旧 `e` モードのOOM、libmbfl各失敗地点は未実測。`mbfl_strcut` など無視されたfilter結果は続けて監査する。
+mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、`mb_convert_kana` の通常動作を確認した。libmbfl出力と全角・半角変換の8 MiB制限下での良性OOM報告・同一ワーカー継続も確認。GET/Cookie/POSTの直接入口、regex callback・旧 `e` モードのOOM、libmbfl各失敗地点は未実測。`mbfl_strcut` の失敗停止は候補へ追加したが、filter内部の各失敗地点と他の戻り値を無視する経路は続けて監査する。
 
 ## 次の作業
 
@@ -41,7 +41,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 公式公開前に作成されたローカル調査メモ4件を参照し、multipart由来SIDと `session.use_only_cookies`、セッションファイルとアプリLFI、serializer設定不一致、破棄時再入、公式修正後の非失敗可能割当を[設計書](BACKPORT-DESIGN.md#公開前メモから追加した経路の判定2026-10-22)と[残課題](notes/remaining-work-2026-10-22.md)に分類した。いずれも両CVEの修正済み判定へ自動的には加えない。
 
-ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で現候補のOPcache有効クリーンビルドと版別検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
+ユーザーの明示許可により `staticwebos-build` VM を正常停止した。今回は `php-backport-lab` で前候補のOPcache有効クリーンビルド、現候補のmbfl_strcut増分ビルドとfocused検査を実施し、検証後にVMを正常停止した。`staticwebos-build` はこの作業では再起動していない。
 
 ユーザーがGitHub証明書について通常のpushを許可したため、TLS検証を無効化せず作業ブランチへ送信できた。main/masterへのpushは行わない。
 

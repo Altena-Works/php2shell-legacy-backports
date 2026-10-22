@@ -8217,3 +8217,105 @@
  			status = BZ2_bzDecompress(&(data->strm));
  			if (data->strm.avail_out < data->outbuf_len) {
  				size_t bucketlen = data->outbuf_len - data->strm.avail_out;
+--- a/ext/mbstring/libmbfl/mbfl/mbfilter.c
++++ b/ext/mbstring/libmbfl/mbfl/mbfilter.c
+@@ -1444,13 +1444,27 @@
+ 		}
+ 
+ 		mbfl_memory_device_init(&device, length + 8, 0);
++		if (device.failed) {
++			mbfl_convert_filter_delete(encoder);
++			mbfl_convert_filter_delete(decoder);
++			return NULL;
++		}
+ 
+ 		p = string->val;
+ 
+ 		/* search start position */
+ 		for (q = string->val + from; p < q; p++) {
+-			(*encoder->filter_function)(*p, encoder);
++			if ((*encoder->filter_function)(*p, encoder) < 0) {
++				device.failed = 1;
++				break;
++			}
+ 		}
++		if (device.failed) {
++			mbfl_memory_device_clear(&device);
++			mbfl_convert_filter_delete(encoder);
++			mbfl_convert_filter_delete(decoder);
++			return NULL;
++		}
+ 
+ 		/* switch the drain direction */
+ 		encoder->output_function = (int(*)(int,void *))decoder->filter_function;
+@@ -1473,8 +1487,19 @@
+ 			/* output a little shorter than "length" */
+ 			/* XXX: the constant "20" was determined purely on the heuristics. */
+ 			for (r = p + length - 20; p < r; p++) {
+-				(*encoder->filter_function)(*p, encoder);
++				if ((*encoder->filter_function)(*p, encoder) < 0) {
++					device.failed = 1;
++					break;
++				}
+ 			}
++			if (device.failed) {
++				_bk.decoder.filter_dtor(&_bk.decoder);
++				_bk.encoder.filter_dtor(&_bk.encoder);
++				mbfl_memory_device_clear(&device);
++				mbfl_convert_filter_delete(encoder);
++				mbfl_convert_filter_delete(decoder);
++				return NULL;
++			}
+ 
+ 			/* if the offset of the resulting string exceeds the length,
+ 			 * then restore the state */
+@@ -1494,7 +1519,9 @@
+ 				bk.pos = device.pos;
+ 
+ 				/* flush the stream */
+-				(*encoder->filter_flush)(encoder);
++				if ((*encoder->filter_flush)(encoder) < 0) {
++					device.failed = 1;
++				}
+ 
+ 				/* if the offset of the resulting string exceeds the length,
+ 				 * then restore the state */
+@@ -1526,8 +1553,11 @@
+ 		}
+ 
+ 		/* detect end position */
+-		while (p < q) {
+-			(*encoder->filter_function)(*p, encoder);
++		while (p < q && !device.failed) {
++			if ((*encoder->filter_function)(*p, encoder) < 0) {
++				device.failed = 1;
++				break;
++			}
+ 
+ 			if (device.pos > length) {
+ 				/* restore filter */
+@@ -1548,7 +1578,12 @@
+ 			_bk.pos = device.pos;
+ 			_bk.p = p;
+ 
+-			(*encoder->filter_flush)(encoder);
++			if ((*encoder->filter_flush)(encoder) < 0) {
++				_bk.decoder.filter_dtor(&_bk.decoder);
++				_bk.encoder.filter_dtor(&_bk.encoder);
++				device.failed = 1;
++				break;
++			}
+ 
+ 			if (device.pos > length) {
+ 				_bk.decoder.filter_dtor(&_bk.decoder);
+@@ -1577,7 +1612,9 @@
+ 			bk = _bk;
+ 		}
+ 
+-		(*encoder->filter_flush)(encoder);
++		if (!device.failed && (*encoder->filter_flush)(encoder) < 0) {
++			device.failed = 1;
++		}
+ 
+ 		bk.decoder.filter_dtor(&bk.decoder);
+ 		bk.encoder.filter_dtor(&bk.encoder);
