@@ -1,0 +1,22 @@
+# PHP 7.3.33 個別経路の検証履歴
+
+## 最新の検証
+
+7.3.33 の `var_unserializer.re` / `.c` で、エスケープ文字列、クラス名、通常文字列・キーの生成を失敗可能な割当に変更した。文字列キーの interned 化後や許可クラス名の小文字化後に保留 OOM があれば復号を中断する。現行候補 SHA-256 は `340e5d4241284b0e049c1c533897ed4a8ff129186943bada0d21175e0ca6e099`。`/private/tmp/php-backport-73-unserialize-clean/patch/7.3.33/` で固定済み元ソースへ fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` SHA-256 は `db3bcf073740996ca771492220549d2c00d95c295319aff6e996d9dbfec53630`。3保存形式のセッション、upload progress、許可クラス・不完全クラス・長い文字列キーの通常動作と、セッション復号中の良性 OOM 後の同一ワーカー継続を確認した。新しい割当失敗地点を個別に強制する検査や全経路遮断は未実施。
+
+先行する JSON 検証では、7.3.33 のパーサで、オブジェクト生成を失敗可能にし、オブジェクト・配列生成の失敗および要素・属性追加後の保留 OOM で解析を中断するよう変更した。`json_parser.y` と生成済み `json_parser.tab.c` を整合させ、既存の Zend 基盤差分との重複 hunk を統合した。当時の候補 SHA-256 は `5b5660ba9e327b8b603b60df2da8b3fddaf0a83701829ee85deb1e6b5630ce0c`。`/private/tmp/php-backport-73-json-clean2/patch/7.3.33/` で元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php チェックが `pass`。`libphp7.so` SHA-256 は `15b3ad5b2a3e09dd3695c3d3a5e98ed670a9df9a5438ca0ecb9e28bf7a153b1b`。通常のネストした JSON 復号と、大きな正常 JSON 配列の良性 OOM 後の同一ワーカー継続を確認した。OOM の発生地点と、公式の失敗可能なハッシュ挿入 API に対する等価性は未確認。
+
+先行するファイル・画像検証では、7.3.33 の `ext/standard/file.c` と `image.c` に、公式8.2.35の行分割・CSV・XBMにおける保留 OOM 中断、`fgets` の失敗可能なコピー、SWF の失敗可能な再確保を移植した。当時の候補 SHA-256 は `7deb56aafe788ae87d4603ae9b7344a450c3f36b4badffd130f3db14c6d613c6`。`/private/tmp/php-backport-73-file-image-clean/patch/7.3.33/` で固定済み元ソースへ fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成 `libphp7.so` は SHA-256 `1c5f6a987189d032c2ff97a58de54bc4782a1e9f8aa3b6e2099954e8acffb9a1`。通常の `file()`・`fgets()`・`fgetcsv()`・XBM 画像判定を追加して確認した。各追加割当失敗と SWF 再確保失敗の個別動的検査、両 CVE の全経路遮断は未確認。
+
+直前の HTML・`levenshtein` 検証候補 SHA-256 は `95acbbb11ca1ad8e0f3b442396ffe8ce9abdd00b0c33ad8f3aef1845ec3a4abd`。`/private/tmp/php-backport-73-html-lev-clean-fixed/patch/7.3.33/` で固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php 版別チェックが `pass`。生成した `libphp7.so` の SHA-256 は `cd95741c5e85c951d6907e079e357316ca135845b9f39785952d9ebfabac5b60`。3保存形式の通常セッション・multipart進捗、JSON、`array_chunk`・`array_map`・`array_pad`・`php://memory`・`nl2br`・`unpack` の正常系と良性OOM、upload progress 中のセッション復号OOM後の同一ワーカー継続を確認した。`shmop` を有効化したビルドで通常の読み書きと12MiB読み取り時の良性OOMを確認した。Cookie ヘッダーの通常設定と大型の生値を追加する際の良性OOMも確認した。HTML 変換は初期確保と旧版固有の2つの再確保を失敗可能にし、通常変換と大型入力時の良性OOMを確認した。`levenshtein` は失敗可能な作業配列確保を追加し、通常値・重み付き値・旧版の長さ超過を確認した。OOM 後はいずれも同一ワーカーが継続した。HTML の再確保2地点と `levenshtein` の割当失敗を個別に発生させる動的検査は未実施。**これらは指定構成・指定経路の検証であり、全入口・全拡張の遮断証明ではない。**
+
+初回の HTML 修正では、OOM エラー表示自体が空文字列になり JSON の既存検査が失敗した。`ZEND_HAS_OOM()` が既に真の間は HTML 表示用の従来の割当を使うよう修正し、同一モジュールの増分ビルドと修正版のクリーンビルドで JSON エラー表示と同一ワーカー継続を再確認した。
+
+`str_repeat`・`str_pad`・`implode`・`chunk_split`・`wordwrap` の失敗可能割当は、`heap->fallible` を呼出し中だけ立て、soft limit 超過を実割当前に `NULL` として返す。`wordwrap` の途中の拡張・縮小も失敗可能な再割当へ変更し、失敗時に元の文字列を解放する。通常の非 fallible 割当は従来の遅延 OOM・hard limit の経路を使う。通常の文字列処理と `wordwrap` の旧版の引数エラー、結果拡張時の上限到達を確認した。OOM を報告した要求は中断し、同じ Apache ワーカーが次要求を処理した。拡張・縮小の割当失敗を個別に発生させる動的検査は未実施。
+
+`explode` は正の `limit` の結果生成ループと末尾挿入、負の `limit` の位置収集・結果生成ループで保留 OOM を検査する。通常の正負 `limit`、旧版の `limit=1`、64 件を超える位置収集、入力準備後の正 `limit` 終端を含む良性 soft OOM と同一ワーカー再利用を確認した。末尾挿入の抑止はソース上の条件でも確認した。
+
+`php_session_rfc1867_update()` と cleanup はセッション再読込や配列分離後の保留 OOM を検査し、保留中の進捗更新・保存を止めて更新フラグを解除する。フォーム・ファイルイベントの割当後は保留 OOM を確認して後続処理を止め、multipart 終了時も保留 OOM のまま進捗配列を分離・更新しない。元アーカイブへの fuzz なし実適用、Linux/amd64・Apache/mod_php の増分ビルド、通常の upload progress を確認した。大きな通常セッションを保存し小さい `memory_limit` で multipart を送る良性検査では、メモリ上限エラー、アプリスクリプト非実行、同一ワーカー再利用を確認した。OOM の厳密な発生地点と、全ての状態寿命・復号失敗経路は未確認。
+
+5.6.40 の機能維持候補は `/private/tmp/php-backport-56-early-candidate-results/` で正常系を確認した。候補パッチ SHA-256 は `f06450a032c02f63f3375f2abd803fd647b1b0614621812dbe2a43255d632e9f`、増分ビルド後の `libphp5.so` は `95486dab9f2e1d47f38e297fed60ea106ff2b55034ad619c6de32cb9cb8b9828`。配布用緊急パッチ SHA-256 は `2eb8b5ba1cb8cc76516d91afc5d341c1144db3c9e1f14301b5722fe5fa124e6b`。両パッチの元ソースへの fuzz なし dry-run は通過したが、変更後の配布用パッチ全体の再ビルドは未実施。配布用は upload progress 停止による暫定緩和であり、機能維持候補や公式同等修正と混同しない。通常 soft OOM では `curl 52` とワーカー交代を確認しており、5.6.40 を完了扱いにしない。
+

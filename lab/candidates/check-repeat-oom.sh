@@ -17,6 +17,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-html-limit.php:/var/www/html/normal-html-limit.php:ro" \
     -v "$script_dir/normal-levenshtein.php:/var/www/html/normal-levenshtein.php:ro" \
     -v "$script_dir/normal-file-image.php:/var/www/html/normal-file-image.php:ro" \
+    -v "$script_dir/normal-pcre-replace-limit.php:/var/www/html/normal-pcre-replace-limit.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
     -v "$script_dir/normal-array-fill-limit.php:/var/www/html/normal-array-fill-limit.php:ro" \
@@ -88,6 +89,9 @@ normal_file_image=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-file-image.php)
 [[ $normal_file_image == FILE_IMAGE_OK ]] || { printf 'normal file/image handling failed: %s\n' "$normal_file_image" >&2; exit 1; }
 printf 'FILE_IMAGE_NORMAL_REPORTED\n'
+normal_pcre=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-pcre-replace-limit.php)
+[[ $normal_pcre == PCRE_REPLACE_OK ]] || { printf 'normal preg_replace failed: %s\n' "$normal_pcre" >&2; exit 1; }
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/shmop-limit.out 'http://127.0.0.1/normal-shmop.php?limit=1' >/dev/null
 shmop_result=$(podman exec "$container_id" tail -c 500 /tmp/shmop-limit.out)
@@ -124,6 +128,18 @@ after_html=$(podman exec "$container_id" curl -fsS --max-time 5 \
     printf 'Apache worker changed after HTML soft OOM\n' >&2; exit 1;
 }
 printf 'HTML_NORMAL_AND_OOM_REPORTED\n'
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/pcre-replace-limit.out 'http://127.0.0.1/normal-pcre-replace-limit.php?limit=1' >/dev/null
+pcre_result=$(podman exec "$container_id" tail -c 500 /tmp/pcre-replace-limit.out)
+after_pcre=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $pcre_result == *READY* && $pcre_result == *'Allowed memory size of 8388608 bytes exhausted'* && $pcre_result != *RETURNED* ]] || {
+    printf 'expected preg_replace soft OOM and request abort missing: %s\n' "$pcre_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_pcre%%$'\n'*} ]] || {
+    printf 'Apache worker changed after preg_replace soft OOM\n' >&2; exit 1;
+}
+printf 'PCRE_REPLACE_NORMAL_AND_OOM_REPORTED\n'
 normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-wordwrap-limit.php)
 [[ $normal_wordwrap == WORDWRAP_OK ]] || { printf 'normal wordwrap failed: %s\n' "$normal_wordwrap" >&2; exit 1; }

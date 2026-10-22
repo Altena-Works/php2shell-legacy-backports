@@ -4983,3 +4983,57 @@
  
  
  	return 0;
+--- a/ext/pcre/php_pcre.c
++++ b/ext/pcre/php_pcre.c
+@@ -1620,6 +1620,9 @@
+ 			options, match_data, mctx);
+ 
+ 	while (1) {
++		if (ZEND_HAS_OOM()) {
++			goto error;
++		}
+ 		piece = subject + last_end_offset;
+ 
+ 		if (count >= 0 && limit > 0) {
+@@ -1678,9 +1681,18 @@
+ 			if (new_len >= alloc_len) {
+ 				alloc_len = zend_safe_address_guarded(2, new_len, alloc_len);
+ 				if (result == NULL) {
+-					result = zend_string_alloc(alloc_len, 0);
++					result = zend_string_safe_falloc(1, alloc_len, 0, 0);
++					if (UNEXPECTED(!result)) {
++						goto error;
++					}
+ 				} else {
+-					result = zend_string_extend(result, alloc_len, 0);
++					zend_string *extended = zend_string_safe_frealloc(result, 1, alloc_len, 0, 0);
++					if (UNEXPECTED(!extended)) {
++						zend_string_release_ex(result, 0);
++						result = NULL;
++						goto error;
++					}
++					result = extended;
+ 				}
+ 			}
+ 
+@@ -1766,9 +1778,18 @@
+ 			if (new_len >= alloc_len) {
+ 				alloc_len = new_len; /* now we know exactly how long it is */
+ 				if (NULL != result) {
+-					result = zend_string_realloc(result, alloc_len, 0);
++					zend_string *extended = zend_string_safe_frealloc(result, 1, alloc_len, 0, 0);
++					if (UNEXPECTED(!extended)) {
++						zend_string_release_ex(result, 0);
++						result = NULL;
++						goto error;
++					}
++					result = extended;
+ 				} else {
+-					result = zend_string_alloc(alloc_len, 0);
++					result = zend_string_safe_falloc(1, alloc_len, 0, 0);
++					if (UNEXPECTED(!result)) {
++						goto error;
++					}
+ 				}
+ 			}
+ 			/* stick that last bit of string on our output */
