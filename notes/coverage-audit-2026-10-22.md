@@ -58,6 +58,11 @@
 
 Zend側の当初未移植だった差分6ファイルを確認した。`zend_API.c` の `object_finit` は JSON 用に追加済み。`zend_smart_str.c` / `.h` は Cookie の経路を部分移植した。`zend_operators.c` の公式追加は復号時の小文字化を失敗可能にする呼出しに使われる。7.3.33では `var_unserializer` 内で失敗可能な小文字名を作って既存のクラス検索APIへ渡す形にした。公式の `zend_string.c` と `zend_compile.c` の追加は新規の `interned_strings_fallible` フラグを支えるもので、7.3.33候補はそのフラグを導入せず復号側の文字列を失敗可能に確保している。これらの行を機械的に移植する必要はないが、OPcache上書きやinterned表の割当失敗を含む同等性は未判定。smart_str の残る経路は7.3.33に公式と同名のAPIがないため、呼び出し側の所有権処理と合わせて未判定のまま調べる。
 
+残る同名5ファイルのうち、`Zend/zend_compile.c` の公式差分は `interned_strings_fallible` の要求初期化だけである。7.3.33にはこのフラグがなく、候補は復号キーを `zend_string_safe_falloc()` で作って `zend_string_init_interned()` を通さない。`Zend/zend_string.c` と `Zend/zend_operators.c` の公式差分もこの失敗可能な interned string・小文字化 API に依存する。候補の代替経路は実装済み。OPcache有効のApache/mod_phpで通常セッション・multipartと良性OOM後の同一ワーカー継続は通過したが、interned key固有の割当失敗は未実測。`ext/mbstring/libmbfl/mbfl/mbfl_encoding.h` の公式差分は `mb_convert_buf` の再確保であり、この型とマクロは7.3.33に存在しない。旧版の対応経路は `mbfl_memory_device_realloc()` とfilter出力なので、候補に変更したそれらの失敗伝播を引き続き監査する。これらは同名ファイルの差分をそのまま移せない理由であり、全経路遮断の証明ではない。
+
+`ext/opcache/ZendAccelerator.c` の公式差分には、失敗可能な文字列初期化に加え、永続化中のCE cache slotを公開前まで保留する処理がある。7.3.33にはその処理が使う `ZSTR_HAS_CE_CACHE`、`IS_STR_CLASS_NAME_MAP_PTR`、`ZEND_MAP_PTR_NEW_OFFSET` がないため、CE cache slot部分は同じ形では適用できない。旧版のinterned string処理の全経路同等性は未判定。
+同ファイルの公式差分末尾にあるpreload用 `php_request_startup()` 直後の割当回数制限解除も、7.3.33の同ファイルにはpreload入口がない。これも同名ファイルへの機械的な移植対象から外す。候補のセッション復号キー生成は interned string handler を通さない。OPcache有効の通常系と良性OOM後の同一ワーカー継続は実測済みだが、各失敗地点は未実測。
+
 - 7.3.33 現行候補は固定済み元ソースへの fuzz なし適用、Linux/amd64 クリーンビルド、Apache/mod_php の指定経路の正常系と良性OOMを確認。`array_pad` は公式の挿入ごとの失敗処理と異なる事前確保案であり、参照数を含む全状態の等価性は未判定。
 - 7.3.33 の前候補は Linux/amd64・Apache/mod_php で一部の正常系と良性OOM後のワーカー継続を確認した。CVE-2026-109618 の全OOM入口、CVE-2026-109619 の全要求境界は未確認。
 - 5.6.40 の機能維持候補は通常 soft OOM でワーカー交代が観測され、公式同等修正には到達していない。その他の PHP 5〜7 最終 `x.y.z` は版別の実装・検証が未完了。

@@ -74,4 +74,5 @@ if [[ $version == 7.3.33 ]]; then
     bash "$script_dir/candidates/check-mbstring-oom.sh" "$source_tree"
     bash "$script_dir/candidates/check-intl-normal.sh" "$source_tree"
     bash "$script_dir/candidates/check-intl-oom.sh" "$source_tree"
+    bash "$script_dir/candidates/check-opcache-normal.sh" "$source_tree"
 fi
