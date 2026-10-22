@@ -12,6 +12,8 @@ if (mb_convert_encoding(mb_convert_encoding('ordinary', 'UTF-16LE', 'UTF-8'), 'U
     || mb_convert_encoding($quoted, 'UTF-8', 'Quoted-Printable') !== 'A=B'
     || mb_substr_count('banana', 'ana', 'UTF-8') !== 1
     || mb_ord('A', 'UTF-8') !== 65
+    || mb_strwidth('Ａ', 'UTF-8') !== 2
+    || mb_strimwidth('ＡB', 0, 2, '', 'UTF-8') !== 'Ａ'
     || mb_convert_kana('Ａ', 'r', 'UTF-8') !== 'A'
     || mb_decode_mimeheader($mime) !== 'café'
     || mb_ereg_replace('a', 'o', 'banana') !== 'bonono'

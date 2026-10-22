@@ -7834,7 +7834,41 @@
  		mbfl_convert_filter_delete(encoder);
  		mbfl_convert_filter_delete(decoder);
  	}
-@@ -1800,14 +1832,14 @@
+@@ -1610,11 +1642,17 @@
+ 		p = string->val;
+ 		n = string->len;
+ 		while (n > 0) {
+-			(*filter->filter_function)(*p++, filter);
++			if ((*filter->filter_function)(*p++, filter) < 0) {
++				mbfl_convert_filter_delete(filter);
++				return (size_t) -1;
++			}
+ 			n--;
+ 		}
+ 
+-		mbfl_convert_filter_flush(filter);
++		if (mbfl_convert_filter_flush(filter) < 0) {
++			mbfl_convert_filter_delete(filter);
++			return (size_t) -1;
++		}
+ 		mbfl_convert_filter_delete(filter);
+ 	}
+ 
+@@ -1713,6 +1751,13 @@
+ 	mkwidth = 0;
+ 	if (marker) {
+ 		mkwidth = mbfl_strwidth(marker);
++		if (mbfl_is_error(mkwidth)) {
++			mbfl_convert_filter_delete(encoder);
++			mbfl_convert_filter_delete(pc.decoder);
++			mbfl_convert_filter_delete(pc.decoder_backup);
++			mbfl_memory_device_clear(&pc.device);
++			return NULL;
++		}
+ 	}
+ 	pc.from = from;
+ 	pc.width = width - mkwidth;
+@@ -1800,14 +1845,14 @@
  		string->encoding,
  		mbfl_memory_device_output, 0, &device);
  	if (decoder == NULL) {
@@ -7851,7 +7885,7 @@
  	}
  
  	param->mode = mode;
-@@ -1819,7 +1851,7 @@
+@@ -1819,7 +1864,7 @@
  		next_filter);
  	if (tl_filter == NULL) {
  		mbfl_free(param);
@@ -7860,7 +7894,7 @@
  	}
  
  	tl_filter->opaque = param;
-@@ -1832,7 +1864,7 @@
+@@ -1832,7 +1877,7 @@
  		(int(*)(void*))next_filter->filter_flush,
  		next_filter);
  	if (encoder == NULL) {
@@ -7869,7 +7903,7 @@
  	}
  
  	/* feed data */
-@@ -1841,14 +1873,20 @@
+@@ -1841,14 +1886,20 @@
  	if (p != NULL) {
  		while (n > 0) {
  			if ((*encoder->filter_function)(*p++, encoder) < 0) {
@@ -7892,7 +7926,7 @@
  out:
  	if (tl_filter != NULL) {
  		if (tl_filter->opaque != NULL) {
-@@ -2007,6 +2045,10 @@
+@@ -2007,6 +2058,10 @@
  mbfl_string *
  mime_header_encoder_result(struct mime_header_encoder_data *pe, mbfl_string *result)
  {
@@ -7903,7 +7937,7 @@
  	if (pe->status1 >= 10) {
  		(*pe->conv2_filter->filter_flush)(pe->conv2_filter);
  		(*pe->encod_filter->filter_flush)(pe->encod_filter);
-@@ -2020,6 +2062,10 @@
+@@ -2020,6 +2075,10 @@
  			}
  		}
  		mbfl_memory_device_devcat(&pe->outdev, &pe->tmpdev);
@@ -7914,7 +7948,7 @@
  	}
  	mbfl_memory_device_reset(&pe->tmpdev);
  	pe->prevpos = 0;
-@@ -2367,6 +2413,10 @@
+@@ -2367,6 +2426,10 @@
  mbfl_string *
  mime_header_decoder_result(struct mime_header_decoder_data *pd, mbfl_string *result)
  {
@@ -7925,7 +7959,7 @@
  	switch (pd->status) {
  	case 1:
  	case 2:
-@@ -2384,6 +2434,10 @@
+@@ -2384,6 +2447,10 @@
  		break;
  	}
  	(*pd->conv2_filter->filter_flush)(pd->conv2_filter);
@@ -7982,7 +8016,20 @@
  	// TODO: avoid reallocation ???
   	RETVAL_STRINGL((char *)result.val, result.len);		/* the string is already strdup()'ed */
  	efree(result.val);
-@@ -4873,8 +4882,12 @@
+@@ -2981,7 +2990,11 @@
+ 	marker.len = 0;
+ 
+ 	if ((from < 0) || (width < 0)) {
+-		swidth = mbfl_strwidth(&string);
++		size_t measured_width = mbfl_strwidth(&string);
++		if (mbfl_is_error(measured_width)) {
++			RETURN_FALSE;
++		}
++		swidth = (zend_long) measured_width;
+ 	}
+ 
+ 	if (from < 0) {
+@@ -4873,8 +4886,12 @@
  			return -1;
  		}
  
@@ -7997,3 +8044,14 @@
  
  		if (dev.pos < 1 || filter->num_illegalchar || dev.buffer[0] >= MBFL_WCSGROUP_UCS4MAX) {
  			mbfl_convert_filter_delete(filter);
+--- a/ext/gd/libgd/wbmp.c
++++ b/ext/gd/libgd/wbmp.c
+@@ -195,7 +195,7 @@
+       return (-1);
+     }
+ 
+-  if ((wbmp->bitmap = (int *) safe_emalloc((size_t)wbmp->width * wbmp->height, sizeof(int), 0)) == NULL)
++  if ((wbmp->bitmap = (int *) _safe_femalloc((size_t)wbmp->width * wbmp->height, sizeof(int), 0 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC)) == NULL)
+     {
+       gdFree (wbmp);
+       return (-1);
