@@ -4020,3 +4020,17 @@
  						memset(ms->data+ms->fsize, 0, newsize - ms->fsize);
  						ms->fsize = newsize;
  					}
+--- a/ext/standard/pack.c
++++ b/ext/standard/pack.c
+@@ -888,6 +888,11 @@
+ 			/* Space for name + number, safe as namelen is ensured <= 200 */
+ 			char n[256];
+ 
++			/* Each repetition allocates a name and a value. */
++			if (ZEND_HAS_OOM()) {
++				RETURN_OOM();
++			}
++
+ 			if (arg != 1 || namelen == 0) {
+ 				/* Need to add element number to name */
+ 				snprintf(n, sizeof(n), "%.*s%d", namelen, name, i + 1);
