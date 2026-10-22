@@ -4050,3 +4050,88 @@
  
  	RETURN_NEW_STR(return_string);
  }
+--- a/Zend/zend_smart_str.c
++++ b/Zend/zend_smart_str.c
+@@ -40,6 +40,29 @@
+ 		str->a = SMART_STR_NEW_LEN(len);
+ 		str->s = (zend_string *) erealloc2(str->s, str->a + _ZSTR_HEADER_SIZE + 1, _ZSTR_HEADER_SIZE + ZSTR_LEN(str->s));
+ 	}
++}
++
++ZEND_API zend_bool ZEND_FASTCALL smart_str_ferealloc(smart_str *str, size_t len)
++{
++	size_t a = len <= SMART_STR_START_LEN ? SMART_STR_START_LEN : SMART_STR_NEW_LEN(len);
++	zend_string *s;
++
++	if (UNEXPECTED(!str->s)) {
++		s = zend_string_safe_falloc(a, 1, 0, 0);
++		if (UNEXPECTED(!s)) {
++			return 0;
++		}
++		ZSTR_LEN(s) = 0;
++	} else {
++		s = (zend_string *)_safe_ferealloc(str->s, 1, a,
++			_ZSTR_HEADER_SIZE + 1 ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++		if (UNEXPECTED(!s)) {
++			return 0;
++		}
++	}
++	str->a = a;
++	str->s = s;
++	return 1;
+ }
+ 
+ ZEND_API void ZEND_FASTCALL smart_str_realloc(smart_str *str, size_t len)
+--- a/Zend/zend_smart_str.h
++++ b/Zend/zend_smart_str.h
+@@ -50,6 +50,7 @@
+ 
+ ZEND_API void ZEND_FASTCALL smart_str_erealloc(smart_str *str, size_t len);
+ ZEND_API void ZEND_FASTCALL smart_str_realloc(smart_str *str, size_t len);
++ZEND_API zend_bool ZEND_FASTCALL smart_str_ferealloc(smart_str *str, size_t len);
+ ZEND_API void ZEND_FASTCALL smart_str_append_escaped(smart_str *str, const char *s, size_t l);
+ ZEND_API void smart_str_append_printf(smart_str *dest, const char *format, ...)
+ 	ZEND_ATTRIBUTE_FORMAT(printf, 2, 3);
+@@ -116,6 +117,20 @@
+ 	ZSTR_LEN(dest->s) = new_len;
+ }
+ 
++static zend_always_inline zend_bool smart_str_fappendl_ex(smart_str *dest, const char *str, size_t len, zend_bool persistent) {
++	size_t new_len = len + (dest->s ? ZSTR_LEN(dest->s) : 0);
++	if (!dest->s || new_len >= dest->a) {
++		if (persistent) {
++			smart_str_realloc(dest, new_len);
++		} else if (UNEXPECTED(!smart_str_ferealloc(dest, new_len))) {
++			return 0;
++		}
++	}
++	memcpy(ZSTR_VAL(dest->s) + ZSTR_LEN(dest->s), str, len);
++	ZSTR_LEN(dest->s) = new_len;
++	return 1;
++}
++
+ static zend_always_inline void smart_str_appendl_ex(smart_str *dest, const char *str, size_t len, zend_bool persistent) {
+ 	size_t new_len = smart_str_alloc(dest, len, persistent);
+ 	memcpy(ZSTR_VAL(dest->s) + ZSTR_LEN(dest->s), str, len);
+--- a/ext/standard/head.c
++++ b/ext/standard/head.c
+@@ -130,10 +130,16 @@
+ 		smart_str_appendc(&buf, '=');
+ 		if (url_encode) {
+ 			zend_string *encoded_value = php_url_encode(ZSTR_VAL(value), ZSTR_LEN(value));
+-			smart_str_append(&buf, encoded_value);
++			zend_bool appended = smart_str_fappendl_ex(&buf, ZSTR_VAL(encoded_value),
++				ZSTR_LEN(encoded_value), 0);
+ 			zend_string_release_ex(encoded_value, 0);
+-		} else {
+-			smart_str_append(&buf, value);
++			if (UNEXPECTED(!appended)) {
++				smart_str_free(&buf);
++				return FAILURE;
++			}
++		} else if (UNEXPECTED(!smart_str_fappendl_ex(&buf, ZSTR_VAL(value), ZSTR_LEN(value), 0))) {
++			smart_str_free(&buf);
++			return FAILURE;
+ 		}
+ 		if (expires > 0) {
+ 			const char *p;

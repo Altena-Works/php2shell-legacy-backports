@@ -13,6 +13,7 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-nl2br-limit.php:/var/www/html/normal-nl2br-limit.php:ro" \
     -v "$script_dir/normal-unpack-limit.php:/var/www/html/normal-unpack-limit.php:ro" \
     -v "$script_dir/normal-shmop.php:/var/www/html/normal-shmop.php:ro" \
+    -v "$script_dir/normal-cookie-limit.php:/var/www/html/normal-cookie-limit.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
     -v "$script_dir/normal-array-fill-limit.php:/var/www/html/normal-array-fill-limit.php:ro" \
@@ -70,6 +71,9 @@ normal_shmop=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-shmop.php)
 [[ $normal_shmop == SHMOP_OK ]] || { printf 'normal shmop failed: %s\n' "$normal_shmop" >&2; exit 1; }
 printf 'SHMOP_NORMAL_REPORTED\n'
+normal_cookie=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-cookie-limit.php)
+[[ $normal_cookie == COOKIE_OK ]] || { printf 'normal cookie failed: %s\n' "$normal_cookie" >&2; exit 1; }
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/shmop-limit.out 'http://127.0.0.1/normal-shmop.php?limit=1' >/dev/null
 shmop_result=$(podman exec "$container_id" tail -c 500 /tmp/shmop-limit.out)
@@ -82,6 +86,18 @@ after_shmop=$(podman exec "$container_id" curl -fsS --max-time 5 \
     printf 'Apache worker changed after shmop soft OOM\n' >&2; exit 1;
 }
 printf 'SHMOP_OOM_REPORTED\n'
+podman exec "$container_id" curl -sS --max-time 20 \
+    -o /tmp/cookie-limit.out 'http://127.0.0.1/normal-cookie-limit.php?limit=1' >/dev/null
+cookie_result=$(podman exec "$container_id" tail -c 500 /tmp/cookie-limit.out)
+after_cookie=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-worker.php)
+[[ $cookie_result == *READY* && $cookie_result == *'Allowed memory size of 8388608 bytes exhausted'* && $cookie_result != *RETURNED* ]] || {
+    printf 'expected cookie soft OOM and request abort missing: %s\n' "$cookie_result" >&2; exit 1;
+}
+[[ ${pre%%$'\n'*} == ${after_cookie%%$'\n'*} ]] || {
+    printf 'Apache worker changed after cookie soft OOM\n' >&2; exit 1;
+}
+printf 'COOKIE_NORMAL_AND_OOM_REPORTED\n'
 normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-wordwrap-limit.php)
 [[ $normal_wordwrap == WORDWRAP_OK ]] || { printf 'normal wordwrap failed: %s\n' "$normal_wordwrap" >&2; exit 1; }
