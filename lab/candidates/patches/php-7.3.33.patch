@@ -50,11 +50,29 @@
  			return FAILURE;
 --- a/Zend/zend_API.h
 +++ b/Zend/zend_API.h
-@@ -376,6 +376,7 @@
+@@ -376,6 +376,25 @@
  
  #define array_init(arg)				ZVAL_ARR((arg), zend_new_array(0))
  #define array_init_size(arg, size)	ZVAL_ARR((arg), zend_new_array(size))
 +#define array_init_singleton(arg)	ZVAL_ARR((arg), zend_new_array_singleton())
++static zend_always_inline zend_bool array_finit_size_ex(zval *arg, uint32_t size, zend_bool packed)
++{
++	HashTable *ht = zend_fnew_array(size);
++	if (UNEXPECTED(!ht)) {
++		ZVAL_NULL(arg);
++		return 0;
++	}
++	if (UNEXPECTED(!zend_hash_real_finit(ht, packed))) {
++		efree(ht);
++		ZVAL_NULL(arg);
++		return 0;
++	}
++	ZVAL_ARR(arg, ht);
++	return 1;
++}
++#define array_finit_size_packed(arg, size) array_finit_size_ex((arg), (size), 1)
++#define array_finit_size_mixed(arg, size) array_finit_size_ex((arg), (size), 0)
++#define RETURN_OOM() do { ZEND_ASSERT(ZEND_HAS_OOM()); (void) return_value; return; } while (0)
  ZEND_API int object_init(zval *arg);
  ZEND_API int object_init_ex(zval *arg, zend_class_entry *ce);
  ZEND_API int object_and_properties_init(zval *arg, zend_class_entry *ce, HashTable *properties);
@@ -167,7 +185,7 @@
 +	}
 +}
 +
-+static ZEND_COLD void zend_mm_delayed_error(const char *format, ...)
++ZEND_API ZEND_COLD void zend_mm_delayed_error(const char *format, ...)
 +{
 +	zend_oom_info *info = &EG(delayed_oom);
 +	zend_string *filename = NULL;
@@ -594,11 +612,12 @@
  typedef struct _zend_leak_info {
  	void *addr;
  	size_t size;
-@@ -397,6 +413,15 @@
+@@ -397,6 +413,16 @@
  
  */
  
 +ZEND_API ZEND_COLD ZEND_NORETURN void zend_mm_safe_error_ex(const char *format, ...);
++ZEND_API ZEND_COLD void zend_mm_delayed_error(const char *format, ...);
 +ZEND_API void zend_mm_oom_info_dtor(zend_oom_info *info);
 +ZEND_API void ZEND_FASTCALL zend_handle_delayed_oom(void);
 +ZEND_API zend_bool zend_mm_fallible_check(size_t nmemb, size_t size, size_t offset);
@@ -897,7 +916,65 @@
  	}
  
  #if defined(ZEND_WIN32)
-@@ -219,6 +219,13 @@
+@@ -117,19 +117,37 @@
+ #endif
+ }
+ 
+-static zend_always_inline void zend_hash_real_init_packed_ex(HashTable *ht)
+-{
+-	HT_SET_DATA_ADDR(ht, pemalloc(HT_SIZE_EX(ht->nTableSize, HT_MIN_MASK), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT));
++static zend_always_inline zend_bool zend_hash_real_finit_packed_ex(HashTable *ht, zend_bool fallible)
++{
++	void *data = fallible && !(GC_FLAGS(ht) & IS_ARRAY_PERSISTENT)
++		? _femalloc(HT_SIZE_EX(ht->nTableSize, HT_MIN_MASK) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC)
++		: pemalloc(HT_SIZE_EX(ht->nTableSize, HT_MIN_MASK), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT);
++	if (UNEXPECTED(!data)) {
++		return 0;
++	}
++	HT_SET_DATA_ADDR(ht, data);
+ 	HT_FLAGS(ht) |= HASH_FLAG_INITIALIZED | HASH_FLAG_PACKED;
+ 	HT_HASH_RESET_PACKED(ht);
+-}
+-
+-static zend_always_inline void zend_hash_real_init_mixed_ex(HashTable *ht)
++	return 1;
++}
++
++static zend_always_inline void zend_hash_real_init_packed_ex(HashTable *ht)
++{
++	(void) zend_hash_real_finit_packed_ex(ht, 0);
++}
++
++static zend_always_inline zend_bool zend_hash_real_finit_mixed_ex(HashTable *ht, zend_bool fallible)
+ {
+ 	uint32_t nSize = ht->nTableSize;
++	void *data = fallible && !(GC_FLAGS(ht) & IS_ARRAY_PERSISTENT)
++		? _femalloc(HT_SIZE_EX(nSize, HT_SIZE_TO_MASK(nSize)) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC)
++		: pemalloc(HT_SIZE_EX(nSize, HT_SIZE_TO_MASK(nSize)), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT);
++	if (UNEXPECTED(!data)) {
++		return 0;
++	}
+ 
+ 	ht->nTableMask = HT_SIZE_TO_MASK(nSize);
+-	HT_SET_DATA_ADDR(ht, pemalloc(HT_SIZE_EX(nSize, HT_SIZE_TO_MASK(nSize)), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT));
++	HT_SET_DATA_ADDR(ht, data);
+ 	HT_FLAGS(ht) |= HASH_FLAG_INITIALIZED;
+ 	if (EXPECTED(ht->nTableMask == HT_SIZE_TO_MASK(HT_MIN_SIZE))) {
+ 		Bucket *arData = ht->arData;
+@@ -162,6 +180,12 @@
+ 	} else {
+ 		HT_HASH_RESET(ht);
+ 	}
++	return 1;
++}
++
++static zend_always_inline void zend_hash_real_init_mixed_ex(HashTable *ht)
++{
++	(void) zend_hash_real_finit_mixed_ex(ht, 0);
+ }
+ 
+ static zend_always_inline void zend_hash_real_init_ex(HashTable *ht, int packed)
+@@ -219,6 +243,13 @@
  	return ht;
  }
  
@@ -911,7 +988,27 @@
  ZEND_API HashTable* ZEND_FASTCALL _zend_new_array(uint32_t nSize)
  {
  	HashTable *ht = emalloc(sizeof(HashTable));
-@@ -230,7 +237,7 @@
+@@ -226,11 +257,27 @@
+ 	return ht;
+ }
+ 
++ZEND_API HashTable* ZEND_FASTCALL zend_fnew_array(uint32_t nSize)
++{
++	HashTable *ht;
++	if (UNEXPECTED(nSize >= HT_MAX_SIZE)) {
++		zend_mm_delayed_error("Possible integer overflow in memory allocation (%u * %zu + %zu)",
++			nSize, sizeof(Bucket), sizeof(Bucket));
++		return NULL;
++	}
++	ht = _femalloc(sizeof(HashTable) ZEND_FILE_LINE_CC ZEND_FILE_LINE_EMPTY_CC);
++	if (UNEXPECTED(!ht)) {
++		return NULL;
++	}
++	_zend_hash_init_int(ht, nSize, ZVAL_PTR_DTOR, 0);
++	return ht;
++}
++
+ static void ZEND_FASTCALL zend_hash_packed_grow(HashTable *ht)
  {
  	HT_ASSERT_RC1(ht);
  	if (ht->nTableSize >= HT_MAX_SIZE) {
@@ -920,7 +1017,23 @@
  	}
  	ht->nTableSize += ht->nTableSize;
  	HT_SET_DATA_ADDR(ht, perealloc2(HT_GET_DATA_ADDR(ht), HT_SIZE_EX(ht->nTableSize, HT_MIN_MASK), HT_USED_SIZE(ht), GC_FLAGS(ht) & IS_ARRAY_PERSISTENT));
-@@ -1041,7 +1048,7 @@
+@@ -258,6 +305,15 @@
+ 
+ 	HT_ASSERT_RC1(ht);
+ 	zend_hash_real_init_mixed_ex(ht);
++}
++
++ZEND_API zend_bool ZEND_FASTCALL zend_hash_real_finit(HashTable *ht, zend_bool packed)
++{
++	IS_CONSISTENT(ht);
++	HT_ASSERT_RC1(ht);
++	ZEND_ASSERT(!(HT_FLAGS(ht) & HASH_FLAG_INITIALIZED));
++	return packed ? zend_hash_real_finit_packed_ex(ht, 1)
++		: zend_hash_real_finit_mixed_ex(ht, 1);
+ }
+ 
+ ZEND_API void ZEND_FASTCALL zend_hash_packed_to_hash(HashTable *ht)
+@@ -1041,7 +1097,7 @@
  		pefree(old_data, GC_FLAGS(ht) & IS_ARRAY_PERSISTENT);
  		zend_hash_rehash(ht);
  	} else {
@@ -931,14 +1044,24 @@
  
 --- a/Zend/zend_hash.h
 +++ b/Zend/zend_hash.h
-@@ -276,6 +276,7 @@
+@@ -102,6 +102,7 @@
+ ZEND_API void ZEND_FASTCALL zend_hash_real_init(HashTable *ht, zend_bool packed);
+ ZEND_API void ZEND_FASTCALL zend_hash_real_init_packed(HashTable *ht);
+ ZEND_API void ZEND_FASTCALL zend_hash_real_init_mixed(HashTable *ht);
++ZEND_API zend_bool ZEND_FASTCALL zend_hash_real_finit(HashTable *ht, zend_bool packed);
+ ZEND_API void ZEND_FASTCALL zend_hash_packed_to_hash(HashTable *ht);
+ ZEND_API void ZEND_FASTCALL zend_hash_to_packed(HashTable *ht);
+ ZEND_API void ZEND_FASTCALL zend_hash_extend(HashTable *ht, uint32_t nSize, zend_bool packed);
+@@ -276,7 +277,9 @@
  #endif
  
  ZEND_API HashTable* ZEND_FASTCALL _zend_new_array_0(void);
 +ZEND_API HashTable* ZEND_FASTCALL zend_new_array_singleton(void);
  ZEND_API HashTable* ZEND_FASTCALL _zend_new_array(uint32_t size);
++ZEND_API HashTable* ZEND_FASTCALL zend_fnew_array(uint32_t size);
  ZEND_API uint32_t zend_array_count(HashTable *ht);
  ZEND_API HashTable* ZEND_FASTCALL zend_array_dup(HashTable *source);
+ ZEND_API void ZEND_FASTCALL zend_array_destroy(HashTable *ht);
 --- a/Zend/zend_llist.c
 +++ b/Zend/zend_llist.c
 @@ -112,6 +112,8 @@
@@ -3731,3 +3854,53 @@
  	ZSTR_LEN(result) = 0;
  
  	/* We need to figure out the left/right padding lengths. */
+--- a/ext/standard/array.c
++++ b/ext/standard/array.c
+@@ -2621,8 +2621,9 @@
+ 			Bucket *p;
+ 			zend_long n;
+ 
+-			array_init_size(return_value, (uint32_t)(start_key + num));
+-			zend_hash_real_init_packed(Z_ARRVAL_P(return_value));
++			if (UNEXPECTED(!array_finit_size_packed(return_value, (uint32_t)(start_key + num)))) {
++				RETURN_OOM();
++			}
+ 			Z_ARRVAL_P(return_value)->nNumUsed = (uint32_t)(start_key + num);
+ 			Z_ARRVAL_P(return_value)->nNumOfElements = (uint32_t)num;
+ 			Z_ARRVAL_P(return_value)->nNextFreeElement = (zend_long)(start_key + num);
+@@ -2646,8 +2647,9 @@
+ 			}
+ 		} else {
+ 			/* create hash */
+-			array_init_size(return_value, (uint32_t)num);
+-			zend_hash_real_init_mixed(Z_ARRVAL_P(return_value));
++			if (UNEXPECTED(!array_finit_size_mixed(return_value, (uint32_t)num))) {
++				RETURN_OOM();
++			}
+ 			if (Z_REFCOUNTED_P(val)) {
+ 				GC_ADDREF_EX(Z_COUNTED_P(val), (uint32_t)num);
+ 			}
+@@ -2703,8 +2705,9 @@
+ 			RETURN_FALSE; \
+ 		} \
+ 		size = (uint32_t)_php_math_round(__calc_size, 0, PHP_ROUND_HALF_UP); \
+-		array_init_size(return_value, size); \
+-		zend_hash_real_init_packed(Z_ARRVAL_P(return_value)); \
++		if (UNEXPECTED(!array_finit_size_packed(return_value, size))) { \
++			RETURN_OOM(); \
++		} \
+ 	} while (0)
+ 
+ #define RANGE_CHECK_LONG_INIT_ARRAY(start, end) do { \
+@@ -2714,8 +2717,9 @@
+ 			RETURN_FALSE; \
+ 		} \
+ 		size = (uint32_t)(__calc_size + 1); \
+-		array_init_size(return_value, size); \
+-		zend_hash_real_init_packed(Z_ARRVAL_P(return_value)); \
++		if (UNEXPECTED(!array_finit_size_packed(return_value, size))) { \
++			RETURN_OOM(); \
++		} \
+ 	} while (0)
+ 
+ /* {{{ proto array range(mixed low, mixed high[, int step])

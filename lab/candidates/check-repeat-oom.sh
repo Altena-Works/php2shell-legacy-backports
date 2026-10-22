@@ -12,6 +12,8 @@ container_id=$(podman run --rm -d --platform linux/amd64 --network none \
     -v "$script_dir/normal-chunk-limit.php:/var/www/html/normal-chunk-limit.php:ro" \
     -v "$script_dir/normal-wordwrap-limit.php:/var/www/html/normal-wordwrap-limit.php:ro" \
     -v "$script_dir/normal-explode-limit.php:/var/www/html/normal-explode-limit.php:ro" \
+    -v "$script_dir/normal-array-fill-limit.php:/var/www/html/normal-array-fill-limit.php:ro" \
+    -v "$script_dir/normal-range-limit.php:/var/www/html/normal-range-limit.php:ro" \
     -v "$script_dir/../normal-worker.php:/var/www/html/normal-worker.php:ro" \
     localhost/php-backport-build:7.4 bash -lc '
         set -e
@@ -57,6 +59,12 @@ normal_wordwrap=$(podman exec "$container_id" curl -fsS --max-time 5 \
 normal_explode=$(podman exec "$container_id" curl -fsS --max-time 5 \
     http://127.0.0.1/normal-explode-limit.php)
 [[ $normal_explode == EXPLODE_OK ]] || { printf 'normal explode failed: %s\n' "$normal_explode" >&2; exit 1; }
+normal_fill=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-array-fill-limit.php)
+[[ $normal_fill == ARRAY_FILL_OK ]] || { printf 'normal array_fill failed: %s\n' "$normal_fill" >&2; exit 1; }
+normal_range=$(podman exec "$container_id" curl -fsS --max-time 5 \
+    http://127.0.0.1/normal-range-limit.php)
+[[ $normal_range == RANGE_OK ]] || { printf 'normal range failed: %s\n' "$normal_range" >&2; exit 1; }
 
 podman exec "$container_id" curl -sS --max-time 20 \
     -o /tmp/repeat-limit.out 'http://127.0.0.1/normal-repeat-limit.php?limit=1' >/dev/null
@@ -156,4 +164,38 @@ for explode_case in positive negative terminal; do
         printf 'Apache worker changed after %s explode soft OOM\n' "$explode_case" >&2; exit 1;
     }
 done
-printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED WORKER_REUSED
+for fill_case in packed mixed; do
+    fill_url='http://127.0.0.1/normal-array-fill-limit.php?limit=1'
+    if [[ $fill_case == mixed ]]; then
+        fill_url+='&mixed=1'
+    fi
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/array-fill-limit.out "$fill_url" >/dev/null
+    filled=$(podman exec "$container_id" tail -c 500 /tmp/array-fill-limit.out)
+    after_fill=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $filled == *READY* && $filled == *'Allowed memory size of 8388608 bytes exhausted'* && $filled != *RETURNED* ]] || {
+        printf 'expected %s array_fill soft OOM and request abort missing: %s\n' "$fill_case" "$filled" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_fill%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s array_fill soft OOM\n' "$fill_case" >&2; exit 1;
+    }
+done
+for range_case in long double; do
+    range_url='http://127.0.0.1/normal-range-limit.php?limit=1'
+    if [[ $range_case == double ]]; then
+        range_url+='&double=1'
+    fi
+    podman exec "$container_id" curl -sS --max-time 20 \
+        -o /tmp/range-limit.out "$range_url" >/dev/null
+    ranged=$(podman exec "$container_id" tail -c 500 /tmp/range-limit.out)
+    after_range=$(podman exec "$container_id" curl -fsS --max-time 5 \
+        http://127.0.0.1/normal-worker.php)
+    [[ $ranged == *READY* && $ranged == *'Allowed memory size of 8388608 bytes exhausted'* && $ranged != *RETURNED* ]] || {
+        printf 'expected %s range soft OOM and request abort missing: %s\n' "$range_case" "$ranged" >&2; exit 1;
+    }
+    [[ ${pre%%$'\n'*} == ${after_range%%$'\n'*} ]] || {
+        printf 'Apache worker changed after %s range soft OOM\n' "$range_case" >&2; exit 1;
+    }
+done
+printf '%s\n' REPEAT_NORMAL_OK REPEAT_OOM_REPORTED AGGREGATE_OOM_REPORTED PAD_NORMAL_OK PAD_OOM_REPORTED IMPLODE_NORMAL_OK IMPLODE_OOM_REPORTED CHUNK_NORMAL_OK CHUNK_OOM_REPORTED WORDWRAP_NORMAL_OK WORDWRAP_OOM_REPORTED EXPLODE_NORMAL_OK EXPLODE_POSITIVE_OOM_REPORTED EXPLODE_NEGATIVE_OOM_REPORTED EXPLODE_TERMINAL_OOM_REPORTED ARRAY_FILL_NORMAL_OK ARRAY_FILL_PACKED_OOM_REPORTED ARRAY_FILL_MIXED_OOM_REPORTED RANGE_NORMAL_OK RANGE_LONG_OOM_REPORTED RANGE_DOUBLE_OOM_REPORTED WORKER_REUSED
