@@ -22,6 +22,8 @@
 
 7.3.33 の現候補 SHA-256 は `b7f35b668d465c6be2c38a4b27f0d8169a9c200c343ade27b7ea258052b3e2b9`。固定元ソースへのfuzzなし適用、intl・OPcache・bzip2・GD・IMAP有効Linux/amd64クリーンビルド、Apache/mod_php版別検査 `pass` を確認した（`/private/tmp/php-backport-73-imap-lib-clean/patch/7.3.33/`）。生成PHPモジュール SHA-256 は `1ada1db73c1f74076dab39c12efb96166abb2823d12f23493102840359f17cfe`。通常セッション・multipart・mbstring・intl・OPcache、良性OOM後の同一Apacheワーカー継続を確認。`mb_strcut`、bzip2、GD/WBMP、IMAP MIMEヘッダーの正常系と指定した良性OOM後の同一ワーカー継続も確認した。各拡張内の別の割当失敗地点、filter内部各失敗地点、interned key固有の割当失敗、両CVEの全経路は未検証。
 
+ExpatとIMAPの同時有効構成では、検証ビルダーにc-clientライブラリ探索用のリンクを追加した。リンクの存在は確認したが、固定ソースからの再ビルドは設定処理中にラボの3600秒制限へ達した（`/private/tmp/php-backport-73-expat-imap-clean/`）。この複合構成の動作は未判定で、上記の`pass`には含まない。
+
 EXIF追加候補には、公式EXIF差分の複数値の失敗可能確保、結果配列のOOM後始末、解析ループの保留OOM停止、サムネイルのファイル境界検査・失敗可能確保と出力文字列の失敗処理を7.3のAPIで追加した。固定済み元ソースへのfuzzなしdry-run、Linux/amd64の既存EXIF有効構成での増分ビルド・リンク、Apache/mod_phpの通常メタデータ・サムネイル読取、既存版別チェックの終了コード0を確認。EXIF固有の各割当失敗地点は未実測で、現候補を `/private/tmp/php-backport-73-exif-expanded-clean/` でクリーンビルドし、Apache/mod_phpの版別チェック `pass`、`EXIF_OK` を確認した。生成モジュール SHA-256 は `8faf828dfaf410ca82f7df301b11de1ca13d70fecef2d63863b21cae7115550b`。
 
 5.6.40 の遅延OOMについて公式8.2.34→8.2.35の差分を再照合した。`zend_alloc.c` のhard limit・保留状態と、VM、関数呼出し、POST、主スクリプト境界が結合している。5.6にアロケータのみを移植する案は採用しない。5.6.40候補の実装・実測状態は前回から変わらない。

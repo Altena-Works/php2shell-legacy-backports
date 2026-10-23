@@ -5,4 +5,5 @@ RUN printf 'deb http://snapshot.debian.org/archive/debian/20221114T000000Z bulls
     && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
         apache2-dev autoconf build-essential libbz2-dev libc-client2007e-dev libcurl4-openssl-dev libkrb5-dev libpng-dev libssl-dev libxml2-dev patch pkg-config re2c zlib1g-dev \
+    && ln -s /usr/lib/libc-client.a /usr/lib/x86_64-linux-gnu/libc-client.a \
     && rm -rf /var/lib/apt/lists/*
