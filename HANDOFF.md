@@ -36,7 +36,7 @@ mbstringではQuoted-Printable、`mb_ord`、`mb_substr_count`、MIMEヘッダ、
 
 ## 次の作業
 
-1. 7.3.33 の残る5ファイルと、実装済みCDF・tokenizer、bzip2・GD・IMAPの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態を判定する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
+1. 7.3.33 の要求内キー interned 化を失敗可能な挿入で保てるか判定する。現候補は永続キーだけを再利用し、旧版の要求内重複キー処理を省く。残る5ファイルと、実装済みCDF・tokenizer、bzip2・GD・IMAPの未実測失敗地点、upload progress中の他の復号OOM地点と要求間状態も判定する。全経路が判定できたら配布用パッチへ昇格し、指定リポジトリの作業ブランチへ速やかにpushする。
 2. 5.6.40 は allocator の soft/hard 上限だけでなく、生成 VM の CALL/SWITCH/GOTO、POST・入力登録、関数呼出し、主スクリプトの境界を結合して遅延 OOM と状態消去を実装する。Linux/amd64・Apache/mod_php で通常 session と upload progress の機能を維持して検証する。
 3. **この 2 版の実装と判定が終わってから**、他の PHP 5〜7 系列の最終 `x.y.z` に進む。版ごとに公式修正との機能同等性と未検証範囲を記録する。
 4. 追加公開情報について、セッション保存形式の不一致・upload progress キーの検証とセッション保持、SimpleXML/GC、`unserialize()` 再入の各経路を版別に静的照合する。現候補での遮断や旧版への影響は、根拠が揃うまで主張しない。
